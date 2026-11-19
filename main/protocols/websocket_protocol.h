@@ -28,6 +28,7 @@ private:
 
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;
+    void SendTtsFinished() override;
     std::string GetHelloMessage();
 };
 

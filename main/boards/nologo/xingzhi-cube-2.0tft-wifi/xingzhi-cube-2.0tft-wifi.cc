@@ -11,6 +11,9 @@
 #include "led/circular_strip.h"
 #include "assets/lang_config.h"
 #include "power_manager.h"
+#include "protocols/ws_control_server.h"
+#include "web_ui/WebUIProvider.h"
+#include "WebUIProviderImpl.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
@@ -18,6 +21,7 @@
 #include <driver/rtc_io.h>
 #include <esp_sleep.h>
 #include <driver/i2c_master.h>
+#include <memory>
 #include "settings.h"
 
 #define TAG "XINGZHI_CUBE_2_0TFT_WIFI"
@@ -28,6 +32,8 @@ private:
     LcdDisplay* display_;
     PowerSaveTimer* power_save_timer_;
     PowerManager* power_manager_;
+    std::unique_ptr<XingzhiCubeWebUIProvider> webui_provider_;
+    std::unique_ptr<WebSocketControlServer> ws_control_server_;
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
     esp_lcd_panel_handle_t panel_ = nullptr;
     i2c_master_bus_handle_t i2c_bus_;
@@ -114,10 +120,17 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
-            // While the radio is playing the mic is muted; the first press
-            // stops the radio and hands the microphone back.
-            if (app.IsRadioPlaying()) {
-                app.StopRadio();
+            // 播放中按一下暂停（Web 端轮询状态会同步显示暂停）；
+            // 已暂停时再按一下停止播放，把麦克风交还。
+            if (app.GetDeviceState() == kDeviceStateNotifying) {
+                app.Schedule([]() {
+                    auto& app = Application::GetInstance();
+                    if (app.GetMusicStatus().paused) {
+                        app.StopMusicPlayback();
+                    } else {
+                        app.PauseMusic();
+                    }
+                });
                 return;
             }
             app.ToggleChatState();
@@ -224,6 +237,16 @@ private:
         gpio_set_level(NETWORK_MODULE_POWER_IN, 1); 
     }
 
+    void InitializeWebSocketControlServer() {
+        webui_provider_ = std::make_unique<XingzhiCubeWebUIProvider>();
+        ws_control_server_ = std::make_unique<WebSocketControlServer>(*webui_provider_);
+        if (!ws_control_server_->Start(80)) {
+            ws_control_server_.reset();
+            webui_provider_.reset();
+            return;
+        }
+    }
+
 public:
     XINGZHI_CUBE_2_0TFT_WIFI() :
         boot_button_(BOOT_BUTTON_GPIO) {
@@ -307,6 +330,13 @@ public:
             power_manager_->SetPlaybackState(level == PowerSaveLevel::PERFORMANCE);
         }
         WifiBoard::SetPowerSaveLevel(level);
+    }
+
+    void StartNetwork() override {
+        WifiBoard::StartNetwork();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        InitializeWebSocketControlServer();
     }
 };
 

@@ -7,6 +7,7 @@
 #include "display.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
+#include "playback_scheduler.h"
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
@@ -19,11 +20,16 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <esp_heap_caps.h>
+#include <esp_random.h>
 
 #define TAG "Application"
 
-Application::Application() : notify_player_(audio_service_) {
+Application::Application() : notify_player_(audio_service_),
+                              playback_scheduler_(std::make_unique<PlaybackScheduler>()) {
     event_group_ = xEventGroupCreate();
+    playback_snapshot_ = static_cast<PlaybackSnapshot*>(
+        heap_caps_malloc(sizeof(PlaybackSnapshot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
 #error "CONFIG_USE_DEVICE_AEC and CONFIG_USE_SERVER_AEC cannot be enabled at the same time"
@@ -59,6 +65,10 @@ Application::~Application() {
         esp_timer_delete(startup_wake_word_hint_timer_);
     }
     vEventGroupDelete(event_group_);
+    if (playback_snapshot_ != nullptr) {
+        heap_caps_free(playback_snapshot_);
+        playback_snapshot_ = nullptr;
+    }
 }
 
 bool Application::SetDeviceState(DeviceState state) { return state_machine_.TransitionTo(state); }
@@ -66,6 +76,7 @@ bool Application::SetDeviceState(DeviceState state) { return state_machine_.Tran
 void Application::Initialize() {
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
+    music_mode_ = LoadPersistedMusicMode();
 
     // Setup the display
     auto display = board.GetDisplay();
@@ -94,6 +105,7 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
     };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
+        music_position_ms_ = media_position_ms;
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
     };
     audio_service_.SetCallbacks(callbacks);
@@ -124,6 +136,18 @@ void Application::Initialize() {
     // quietly: the only sign on this device was an alert at boot and a sad face, which is
     // easy to see and hard to connect to a tool list.
     mcp_server.LogToolInventory();
+
+    // 初始化 PlaybackScheduler
+    playback_scheduler_->Initialize(*this);
+
+    // 运行时拉高关键模块日志级别，便于串口调测 AI 对话/播放流程
+    esp_log_level_set("MCP", ESP_LOG_DEBUG);
+    esp_log_level_set("NOTIFY", ESP_LOG_WARN);      // 只看错误/警告
+    esp_log_level_set("Application", ESP_LOG_WARN); // 只看错误/警告
+    esp_log_level_set("WSControl", ESP_LOG_DEBUG);   // 修正：代码里用的是 "WSControl"
+    esp_log_level_set("PROTO", ESP_LOG_DEBUG);   // AI 对话日志
+    esp_log_level_set("HTTP", ESP_LOG_WARN);
+    ESP_LOGI(TAG, "Debug log levels enabled for MCP/WSControl/PROTO; NOTIFY/Application at WARN");
 
     // Set network event callback for UI updates and network state handling
     board.SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
@@ -690,6 +714,9 @@ void Application::InitializeProtocol() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
                 }
+            } else if (strcmp(state->valuestring, "sentence_end") == 0) {
+                // TTS 句子播放结束，通知 AI 侧
+                SendTtsFinished();
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
             auto text = cJSON_GetObjectItem(root, "text");
@@ -1204,10 +1231,28 @@ void Application::ConfigureWakeWordForListening() {
 #endif
 }
 
-void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {
+void Application::InterruptSpeakingForPlayback() {
+    auto state = GetDeviceState();
+    if (state != kDeviceStateSpeaking && state != kDeviceStateListening &&
+        state != kDeviceStateConnecting) {
+        return;
+    }
+    AbortSpeaking(kAbortReasonNone);
+    audio_service_.ResetDecoder();          // 立刻丢掉本地排队的 TTS 音频
+    while (audio_service_.PopPacketFromSendQueue()) {
+    }
+    SetDeviceState(kDeviceStateIdle);       // Speaking/Listening/Connecting -> Idle 均合法
+}
+
+bool Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                                   const std::string& username, const std::string& password,
+                                   const std::string& title, uint64_t start_byte_pos,
+                                   uint32_t start_pos_ms, uint32_t start_duration_ms) {
+    // AI 说话期间工具调用会落到 Speaking 状态，先打断再启动播放
+    InterruptSpeakingForPlayback();
     if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
         ESP_LOGW(TAG, "Ignoring notify message while device is busy");
-        return;
+        return false;
     }
 
     auto& board = Board::GetInstance();
@@ -1221,7 +1266,7 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
 
     if (!SetDeviceState(kDeviceStateNotifying)) {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        return;
+        return false;
     }
 
     audio_service_.ResetDecoder();
@@ -1242,15 +1287,30 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
         },
         [this](uint32_t id, bool success) {
             Schedule([this, id, success]() { HandleNotificationFinished(id, success); });
-        });
+        },
+        username, password, start_byte_pos, start_pos_ms, start_duration_ms);
 
     if (!started) {
         ESP_LOGE(TAG, "Failed to start notification playback");
         StopNotification();
+        return false;
     }
+    if (!title.empty()) {
+        Schedule([this, playback_id, title = std::string(title)]() {
+            if (GetDeviceState() == kDeviceStateNotifying && notification_playback_id_ == playback_id) {
+                Board::GetInstance().GetDisplay()->SetChatMessage("assistant", title.c_str());
+            }
+        });
+    }
+    return true;
 }
 
-void Application::StopNotification() {
+void Application::StopNotification(bool force) {
+    if (!force && music_paused_) {
+        // 暂停期间协议重置等内部流程不应结束会话；底层已停流，保留快照与 Notifying 状态
+        notify_player_.Stop();
+        return;
+    }
     notify_player_.Stop();
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();
@@ -1261,13 +1321,404 @@ void Application::StopNotification() {
     }
 }
 
+void Application::ClearMusicSessionLocked() {
+    music_playlist_.clear();
+    music_order_.clear();
+    music_cursor_ = 0;
+    music_source_index_ = -1;
+    music_active_ = false;
+    music_paused_ = false;
+    music_single_ = false;
+    music_fail_streak_ = 0;
+    music_truncated_ = false;
+    music_position_ms_ = 0;
+    if (playback_snapshot_ != nullptr) {
+        playback_snapshot_->valid = false;
+    }
+}
+
+bool Application::StartMusic(const MusicSource& source) {
+    StopNotification(true);
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+        music_playlist_.push_back(source);
+        music_order_.push_back(0);
+        music_single_ = true;
+        music_active_ = true;
+        music_paused_ = false;
+    }
+    return StartNotification(source.audio_url, {}, source.username, source.password, source.title);
+}
+
+bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_index,
+                                    MusicPlayMode mode, int start_index, bool truncated) {
+    if (tracks.empty()) {
+        return false;
+    }
+    if (start_index < 0 || start_index >= static_cast<int>(tracks.size())) {
+        start_index = 0;
+    }
+    StopNotification(true);
+    MusicSource first;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+        music_playlist_ = std::move(tracks);
+        music_source_index_ = source_index;
+        music_mode_ = mode;
+        music_active_ = true;
+        music_paused_ = false;
+        music_truncated_ = truncated;
+        music_order_.resize(music_playlist_.size());
+        for (size_t i = 0; i < music_order_.size(); ++i) {
+            music_order_[i] = i;
+        }
+        if (mode == MusicPlayMode::kShuffle) {
+            for (size_t i = music_order_.size(); i > 1; --i) {
+                size_t j = esp_random() % i;
+                std::swap(music_order_[i - 1], music_order_[j]);
+            }
+        }
+        // 从指定曲目开始，保持其余曲目的相对顺序
+        auto begin = std::find(music_order_.begin(), music_order_.end(),
+                               static_cast<size_t>(start_index));
+        if (begin != music_order_.end()) {
+            std::rotate(music_order_.begin(), begin, music_order_.end());
+        }
+        music_cursor_ = 0;
+        first = music_playlist_[music_order_[0]];
+    }
+    return StartNotification(first.audio_url, {}, first.username, first.password, first.title);
+}
+
+bool Application::PlayMusicTrackAt(int index) {
+    MusicSource source;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_playlist_.empty() || index < 0 ||
+            index >= static_cast<int>(music_playlist_.size())) {
+            return false;
+        }
+        auto it = std::find(music_order_.begin(), music_order_.end(), static_cast<size_t>(index));
+        if (it == music_order_.end()) {
+            return false;
+        }
+        music_cursor_ = static_cast<size_t>(it - music_order_.begin());
+        music_single_ = false;
+        music_fail_streak_ = 0;
+        source = music_playlist_[index];
+    }
+    StopNotification(true);
+    return StartNotification(source.audio_url, {}, source.username, source.password, source.title);
+}
+
+bool Application::PlayNextMusic() {
+    MusicSource next;
+    bool has_next = false;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_playlist_.empty()) {
+            return false;
+        }
+        if (music_cursor_ + 1 < music_order_.size()) {
+            ++music_cursor_;
+            music_fail_streak_ = 0;
+            next = music_playlist_[music_order_[music_cursor_]];
+            has_next = true;
+        } else {
+            ClearMusicSessionLocked();
+        }
+    }
+    StopNotification(true);
+    if (has_next) {
+        return StartNotification(next.audio_url, {}, next.username, next.password, next.title);
+    }
+    return false;
+}
+
+bool Application::PlayPrevMusic() {
+    MusicSource prev;
+    bool has_prev = false;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_playlist_.empty()) {
+            return false;
+        }
+        if (music_cursor_ > 0) {
+            --music_cursor_;
+        }
+        music_fail_streak_ = 0;
+        prev = music_playlist_[music_order_[music_cursor_]];
+        has_prev = true;
+    }
+    StopNotification(true);
+    if (has_prev) {
+        return StartNotification(prev.audio_url, {}, prev.username, prev.password, prev.title);
+    }
+    return false;
+}
+
+bool Application::CapturePlaybackSnapshot() {
+    NotifyPlayer::PlaybackInfo info;
+    if (!notify_player_.GetPlaybackInfo(info)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(music_mutex_);
+    if (!music_active_ || playback_snapshot_ == nullptr) {
+        return false;
+    }
+    auto& s = *playback_snapshot_;
+    uint32_t duration = info.duration_ms;
+    if (duration == 0 && info.byte_pos > 0 && info.position_ms > 0 &&
+        info.file_size > info.byte_pos) {
+        duration = static_cast<uint32_t>(static_cast<double>(info.file_size) * info.position_ms /
+                                         info.byte_pos);
+    }
+    s.token = info.playback_id;
+    s.source_index = music_source_index_;
+    s.cursor = static_cast<int>(music_cursor_);
+    s.position_ms = info.position_ms;
+    s.duration_ms = duration;
+    s.byte_pos = info.byte_pos;   // 暂停瞬间的真实 IO 位置
+    s.file_size = info.file_size;
+    s.mode = static_cast<uint8_t>(music_mode_);
+    s.valid = true;
+    ESP_LOGD(TAG, "Capture snapshot: pos=%u dur=%u byte=%llu size=%llu",
+             s.position_ms, s.duration_ms, static_cast<unsigned long long>(s.byte_pos),
+             static_cast<unsigned long long>(s.file_size));
+    return true;
+}
+
+void Application::UpdateSnapshotPositionLocked(uint32_t time_ms) {
+    auto& s = *playback_snapshot_;
+    uint32_t target = time_ms;
+    if (s.duration_ms > 0 && target > s.duration_ms) {
+        target = s.duration_ms;
+    }
+    if (s.duration_ms > 0 && s.file_size > 0) {
+        s.byte_pos = static_cast<uint64_t>(static_cast<double>(target) / s.duration_ms * s.file_size);
+    } else if (s.position_ms > 0 && s.byte_pos > 0) {
+        // 时长未知时用已保存的真实 byte_pos 按比例推算
+        s.byte_pos = static_cast<uint64_t>(static_cast<double>(target) / s.position_ms * s.byte_pos);
+    }
+    s.position_ms = target;
+    music_position_ms_ = static_cast<int>(target);
+}
+
+bool Application::RestartFromSnapshot() {
+    PlaybackSnapshot snap;
+    MusicSource track;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || playback_snapshot_ == nullptr || !playback_snapshot_->valid) {
+            return false;
+        }
+        snap = *playback_snapshot_;
+        if (snap.cursor < 0 || static_cast<size_t>(snap.cursor) >= music_order_.size()) {
+            return false;
+        }
+        size_t index = music_order_[snap.cursor];
+        if (index >= music_playlist_.size()) {
+            return false;
+        }
+        track = music_playlist_[index];
+    }
+    // notifying -> idle 是合法转换，StartNotification 会重新进入 notifying
+    if (GetDeviceState() == kDeviceStateNotifying) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+    ESP_LOGI(TAG, "Restart playback at %u ms, byte_pos=%llu, duration=%u ms",
+             snap.position_ms, static_cast<unsigned long long>(snap.byte_pos), snap.duration_ms);
+    bool ok = StartNotification(track.audio_url, {}, track.username, track.password, track.title,
+                                snap.byte_pos, snap.position_ms, snap.duration_ms);
+    if (ok) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        playback_snapshot_->valid = false;
+        music_position_ms_ = static_cast<int>(snap.position_ms);
+    }
+    return ok;
+}
+
+bool Application::PauseMusic() {
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_paused_) {
+            return false;
+        }
+    }
+    if (!CapturePlaybackSnapshot()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_paused_) {
+            return false;
+        }
+        music_paused_ = true;
+        music_position_ms_ = static_cast<int>(playback_snapshot_->position_ms);
+    }
+    notify_player_.Stop();
+    return true;
+}
+
+bool Application::ResumeMusic() {
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || !music_paused_) {
+            return false;
+        }
+    }
+    bool ok = RestartFromSnapshot();
+    if (ok) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        music_paused_ = false;
+    }
+    return ok;
+}
+
+bool Application::SeekMusic(uint32_t time_ms) {
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_playlist_.empty() || music_cursor_ >= music_order_.size()) {
+            return false;
+        }
+        if (music_paused_ && playback_snapshot_ != nullptr && playback_snapshot_->valid) {
+            UpdateSnapshotPositionLocked(time_ms);
+            return true;
+        }
+    }
+    // 播放中：与暂停共用同一份 PSRAM 快照，按同一路径重启
+    if (!CapturePlaybackSnapshot()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        UpdateSnapshotPositionLocked(time_ms);
+    }
+    notify_player_.Stop();  // 只停流，保留会话与设备状态
+    return RestartFromSnapshot();
+}
+
+void Application::StopMusicPlayback() {
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+    }
+    StopNotification(true);
+}
+
+Application::MusicPlayMode Application::LoadPersistedMusicMode() {
+    Settings settings("music", false);
+    return settings.GetInt("play_mode", 0) == 1 ? MusicPlayMode::kShuffle
+                                               : MusicPlayMode::kSequential;
+}
+
+int Application::LoadSelectedSource() {
+    Settings settings("music", false);
+    return settings.GetInt("selected_source", 0);
+}
+
+void Application::SaveSelectedSource(int index) {
+    Settings settings("music", true);
+    settings.SetInt("selected_source", index);
+}
+
+void Application::SetMusicMode(MusicPlayMode mode) {
+    // 模式立即持久化，重启和后续“播放全部音乐”都从 NVS 读取
+    {
+        Settings settings("music", true);
+        settings.SetInt("play_mode", mode == MusicPlayMode::kShuffle ? 1 : 0);
+    }
+    std::lock_guard<std::mutex> lock(music_mutex_);
+    if (!music_active_ || music_playlist_.empty() || music_cursor_ >= music_order_.size()) {
+        music_mode_ = mode;
+        return;
+    }
+    size_t current = music_order_[music_cursor_];
+    music_mode_ = mode;
+    music_order_.resize(music_playlist_.size());
+    for (size_t i = 0; i < music_order_.size(); ++i) {
+        music_order_[i] = i;
+    }
+    if (mode == MusicPlayMode::kShuffle) {
+        for (size_t i = music_order_.size(); i > 1; --i) {
+            size_t j = esp_random() % i;
+            std::swap(music_order_[i - 1], music_order_[j]);
+        }
+    }
+    auto begin = std::find(music_order_.begin(), music_order_.end(), current);
+    if (begin != music_order_.end()) {
+        std::rotate(music_order_.begin(), begin, music_order_.end());
+    }
+    music_cursor_ = 0;
+}
+
+Application::MusicStatus Application::GetMusicStatus() const {
+    MusicStatus status;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        status.active = music_active_;
+        status.paused = music_paused_;
+        status.position_ms = music_position_ms_;
+        status.duration_ms = static_cast<int>(notify_player_.GetGmfDurationMs());
+        // 暂停后 Stop() 会清空 GMF 时长，用快照兜底，避免 WebUI 滑块 max 丢失
+        if (status.duration_ms == 0 && music_paused_ && playback_snapshot_ != nullptr &&
+            playback_snapshot_->valid) {
+            status.duration_ms = static_cast<int>(playback_snapshot_->duration_ms);
+        }
+        status.single = music_single_;
+        status.source_index = music_source_index_;
+        status.total = static_cast<int>(music_playlist_.size());
+        status.truncated = music_truncated_;
+        status.mode = music_mode_;
+        status.volume = Board::GetInstance().GetAudioCodec()->output_volume();
+        if (music_active_ && music_cursor_ < music_order_.size()) {
+            status.track_index = static_cast<int>(music_order_[music_cursor_]);
+            status.title = music_playlist_[music_order_[music_cursor_]].title;
+        }
+    }
+    return status;
+}
+
 void Application::HandleNotificationFinished(uint32_t playback_id, bool success) {
+    // 忽略暂停时迟到的完成回调，否则会停掉会话并清掉暂停现场
+    if (GetMusicStatus().paused) {
+        return;
+    }
     if (GetDeviceState() != kDeviceStateNotifying || notification_playback_id_ != playback_id) {
         return;
     }
     ESP_LOGI(TAG, "Notification playback %lu %s", static_cast<unsigned long>(playback_id),
              success ? "completed" : "failed");
     StopNotification();
+
+    MusicSource next;
+    bool has_next = false;
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_) {
+            return;
+        }
+        if (music_single_) {
+            ClearMusicSessionLocked();
+            return;
+        }
+        music_fail_streak_ = success ? 0 : music_fail_streak_ + 1;
+        if (music_fail_streak_ < 3 && music_cursor_ + 1 < music_order_.size()) {
+            ++music_cursor_;
+            next = music_playlist_[music_order_[music_cursor_]];
+            has_next = true;
+        } else {
+            if (music_fail_streak_ >= 3) {
+                ESP_LOGW(TAG, "Music stopped after %d consecutive failures", music_fail_streak_);
+            }
+            ClearMusicSessionLocked();
+        }
+    }
+    if (has_next) {
+        StartNotification(next.audio_url, {}, next.username, next.password, next.title);
+    }
 }
 
 void Application::Schedule(std::function<void()>&& callback) {
@@ -1434,6 +1885,26 @@ void Application::SendMcpMessage(const std::string& payload) {
             mcp_broadcast_callback_(payload);
         }
     });
+}
+
+void Application::SendTtsFinished() {
+    Schedule([this]() {
+        if (protocol_) {
+            protocol_->SendTtsFinished();
+        }
+    });
+}
+
+bool Application::IsNotifyPlayerBusy() const {
+    return notify_player_.IsBusy();
+}
+
+PlaybackScheduler& Application::GetPlaybackScheduler() {
+    return *playback_scheduler_;
+}
+
+const PlaybackScheduler& Application::GetPlaybackScheduler() const {
+    return *playback_scheduler_;
 }
 
 void Application::SetAecMode(AecMode mode) {

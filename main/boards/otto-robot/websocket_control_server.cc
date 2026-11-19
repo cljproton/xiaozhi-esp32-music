@@ -84,6 +84,48 @@ esp_err_t WebSocketControlServer::ws_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+esp_err_t WebSocketControlServer::MusicPlayHandler(httpd_req_t *req) {
+    if (instance_ == nullptr) {
+        return ESP_FAIL;
+    }
+
+    constexpr size_t kMaxBodyLen = 1024;
+    if (req->content_len > kMaxBodyLen) {
+        return ESP_FAIL;
+    }
+
+    char buf[kMaxBodyLen + 1];
+    size_t received = 0;
+    if (req->content_len > 0) {
+        int ret = httpd_req_recv(req, buf, req->content_len);
+        if (ret <= 0) {
+            return ESP_FAIL;
+        }
+        received = static_cast<size_t>(ret);
+    }
+    buf[received] = '\0';
+
+    cJSON* root = cJSON_Parse(buf);
+    std::string source;
+    if (root != nullptr) {
+        auto source_item = cJSON_GetObjectItem(root, "source");
+        if (source_item != nullptr) {
+            if (cJSON_IsString(source_item)) {
+                source = source_item->valuestring;
+            } else if (cJSON_IsObject(source_item)) {
+                CJsonStringUniquePtr printed(cJSON_PrintUnformatted(source_item));
+                source = printed ? std::string(printed.get()) : std::string();
+            }
+        }
+        cJSON_Delete(root);
+    }
+
+    auto result = McpServer::GetInstance().PlayMusic(source);
+    std::string response = result ? "{\"status\":\"playing\"}" : "{\"status\":\"error\"}";
+    httpd_resp_send(req, response.c_str(), response.size());
+    return ESP_OK;
+}
+
 bool WebSocketControlServer::Start(int port) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
@@ -101,6 +143,20 @@ bool WebSocketControlServer::Start(int port) {
     if (httpd_start(&server_handle_, &config) == ESP_OK) {
         httpd_register_uri_handler(server_handle_, &ws_uri);
         ESP_LOGI(TAG, "WebSocket server started on port %d", port);
+
+        httpd_uri_t music_play_uri = {
+            .uri = "/api/music/play",
+            .method = HTTP_POST,
+            .handler = MusicPlayHandler,
+            .user_ctx = nullptr,
+            .is_websocket = false
+        };
+
+        if (httpd_register_uri_handler(server_handle_, &music_play_uri) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register /api/music/play URI handler");
+            return false;
+        }
+
         return true;
     }
 

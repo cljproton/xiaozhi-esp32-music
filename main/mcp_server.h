@@ -14,6 +14,7 @@
 #include <cJSON.h>
 #include <mbedtls/base64.h>
 
+#include "application.h"
 #include "cjson_utils.h"
 
 class ImageContent {
@@ -28,6 +29,7 @@ private:
         std::string result(dlen, 0);
         mbedtls_base64_encode((unsigned char*)result.data(), result.size(), &olen,
                               (const unsigned char*)data.data(), data.size());
+        result.resize(olen);
         return result;
     }
 
@@ -473,6 +475,25 @@ public:
                          const PropertyList& properties, ToolCallback callback);
     void ParseMessage(const cJSON* json, ResponseSender response_sender = nullptr);
     void ParseMessage(const std::string& message, ResponseSender response_sender = nullptr);
+    // Shared music playback entry reused by the `self.music.play` tool and the HTTP API.
+    ToolResult PlayMusic(const std::string& source);
+    // WebDAV directory listing (PROPFIND) shared by the music sources flow.
+    std::expected<std::string, std::string> ListWebdav(const std::string& source);
+    // base_url 只保留 scheme://host[:port]，供音源迁移复用
+    static std::string UrlOrigin(const std::string& url);
+    // WebDAV audio tracks in a source directory; shared by the play-all and count tools.
+    std::expected<std::vector<Application::MusicSource>, std::string> ListMusicTracks(
+        const std::string& source, bool* truncated = nullptr);
+    // Play every audio track of a WebDAV source, in order or random order.
+    ToolResult PlayMusicAll(const std::string& source, bool random);
+    // Count the audio tracks of a WebDAV source.
+    ToolResult CountMusic(const std::string& source);
+    // 播放已配置音源的全部曲目（index 为音源序号，从 0 开始）
+    ToolResult PlayMusicSourceAt(int index, bool random);
+    // 在已配置音源中按关键词模糊查找曲目，返回匹配列表（含 index/title）
+    ToolResult SearchMusic(const std::string& keyword, int source_index);
+    // 播放已配置音源中的指定曲目（与 search 返回的 index 配合）
+    ToolResult PlayMusicTrackAt(int source_index, int track_index);
 
 private:
     McpServer();

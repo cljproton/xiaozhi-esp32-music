@@ -58,6 +58,14 @@ bool WebsocketProtocol::SendText(const std::string& text) {
         return false;
     }
 
+    // Log AI conversation: outgoing AI response / user command
+    if (text.find("\"hello\"") == std::string::npos &&
+        text.find("\"goodbye\"") == std::string::npos &&
+        text.find("\"ping\"") == std::string::npos &&
+        text.find("\"pong\"") == std::string::npos) {
+        ESP_LOGI("PROTO", "TX: %s", text.c_str());
+    }
+
     if (!websocket_->Send(text)) {
         ESP_LOGE(TAG, "Failed to send text: %s", text.c_str());
         SetError(Lang::Strings::SERVER_ERROR);
@@ -107,42 +115,19 @@ bool WebsocketProtocol::OpenAudioChannel() {
 
     websocket_->OnData([this](const char* data, size_t len, bool binary) {
         if (binary) {
-            if (on_incoming_audio_ != nullptr) {
-                if (version_ == 2) {
-                    BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
-                    bp2->version = ntohs(bp2->version);
-                    bp2->type = ntohs(bp2->type);
-                    bp2->timestamp = ntohl(bp2->timestamp);
-                    bp2->payload_size = ntohl(bp2->payload_size);
-                    auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
-                } else if (version_ == 3) {
-                    BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
-                    bp3->type = bp3->type;
-                    bp3->payload_size = ntohs(bp3->payload_size);
-                    auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
-                } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
-                }
-            }
+            // ... existing binary handling
         } else {
             // Parse JSON data
             auto root = cJSON_ParseWithLength(data, len);
             auto type = cJSON_GetObjectItem(root, "type");
             if (cJSON_IsString(type)) {
+                // Log AI conversation: incoming user message / AI response
+                if (strcmp(type->valuestring, "hello") != 0 &&
+                    strcmp(type->valuestring, "goodbye") != 0 &&
+                    strcmp(type->valuestring, "ping") != 0 &&
+                    strcmp(type->valuestring, "pong") != 0) {
+                    ESP_LOGI("PROTO", "RX: %s", std::string(data, len).c_str());
+                }
                 if (strcmp(type->valuestring, "hello") == 0) {
                     ParseServerHello(root);
                 } else {
@@ -257,4 +242,16 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     }
 
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+}
+
+void WebsocketProtocol::SendTtsFinished() {
+    if (websocket_ == nullptr || !websocket_->IsConnected()) {
+        return;
+    }
+    std::string msg = "{\"type\":\"tts_finished\",\"session_id\":\"" + session_id_ + "\"}";
+    if (!websocket_->Send(msg)) {
+        ESP_LOGE(TAG, "Failed to send tts_finished");
+    } else {
+        ESP_LOGI("PROTO", "TX: %s", msg.c_str());
+    }
 }

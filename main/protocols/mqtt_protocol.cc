@@ -123,6 +123,14 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     });
 
     mqtt_->OnMessage([this](const std::string& topic, const std::string& payload) {
+        // Log AI conversation: incoming user message / AI response
+        if (payload.find("\"hello\"") == std::string::npos &&
+            payload.find("\"goodbye\"") == std::string::npos &&
+            payload.find("\"ping\"") == std::string::npos &&
+            payload.find("\"pong\"") == std::string::npos) {
+            ESP_LOGI("PROTO", "RX: %s", payload.c_str());
+        }
+
         cJSON* root = cJSON_Parse(payload.c_str());
         if (root == nullptr) {
             ESP_LOGE(TAG, "Failed to parse json message %s", payload.c_str());
@@ -201,6 +209,13 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
 bool MqttProtocol::SendText(const std::string& text) {
     if (publish_topic_.empty()) {
         return false;
+    }
+    // Log AI conversation: outgoing AI response / user command
+    if (text.find("\"hello\"") == std::string::npos &&
+        text.find("\"goodbye\"") == std::string::npos &&
+        text.find("\"ping\"") == std::string::npos &&
+        text.find("\"pong\"") == std::string::npos) {
+        ESP_LOGI("PROTO", "TX: %s", text.c_str());
     }
     if (!mqtt_->Publish(publish_topic_, text)) {
         ESP_LOGE(TAG, "Failed to publish message: %s", text.c_str());
@@ -778,5 +793,17 @@ void MqttProtocol::ProcessPending() {
     } else if (udp != nullptr) {
         // A modem send may wait for AT, but never retain channel_mutex_ or wait for PONG.
         udp->Send(packet);
+    }
+}
+
+void MqttProtocol::SendTtsFinished() {
+    if (session_id_.empty() || !mqtt_ || !mqtt_->IsConnected()) {
+        return;
+    }
+    std::string msg = "{\"type\":\"tts_finished\",\"session_id\":\"" + session_id_ + "\"}";
+    if (!mqtt_->Publish(publish_topic_, msg)) {
+        ESP_LOGE(TAG, "Failed to publish tts_finished");
+    } else {
+        ESP_LOGI("PROTO", "TX: %s", msg.c_str());
     }
 }

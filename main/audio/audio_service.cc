@@ -628,6 +628,60 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
     return true;
 }
 
+bool AudioService::PushPcmPlaybackTask(std::vector<int16_t>&& pcm, int sample_rate, uint32_t channels, uint32_t playback_id, uint32_t media_position_ms) {
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    const uint32_t generation = playback_generation_;
+    audio_queue_cv_.wait(lock, [this, generation]() {
+        return service_stopped_.load() || generation != playback_generation_ ||
+               audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE;
+    });
+    if (service_stopped_.load() || generation != playback_generation_) {
+        return false;
+    }
+
+    AudioTask task;
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.timestamp = 0;
+    task.playback_id = playback_id;
+    task.media_position_ms = media_position_ms;
+    task.pcm = std::move(pcm);
+
+    // Downmix to mono (codec output is mono) and resample to the codec output rate.
+    std::vector<int16_t> mixed = task.pcm;
+    if (channels > 1) {
+        mixed.clear();
+        mixed.reserve(task.pcm.size() / channels + 1);
+        for (size_t i = 0; i < task.pcm.size(); i += channels) {
+            int32_t sum = 0;
+            for (uint32_t c = 0; c < channels; ++c) {
+                sum += task.pcm[i + c];
+            }
+            mixed.push_back(static_cast<int16_t>(sum / static_cast<int32_t>(channels)));
+        }
+        task.pcm = std::move(mixed);
+    }
+    if (!task.pcm.empty() && sample_rate != codec_->output_sample_rate()) {
+        if (output_resampler_ == nullptr) {
+            return false;
+        }
+        uint32_t target_size = 0;
+        esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task.pcm.size(), &target_size);
+        std::vector<int16_t> resampled(target_size);
+        uint32_t actual_output = target_size;
+        esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task.pcm.data(), task.pcm.size(),
+                                 (esp_ae_sample_t)resampled.data(), &actual_output);
+        task.pcm = std::move(resampled);
+        task.pcm.resize(actual_output);
+    }
+
+    playback_drained_notified_ = false;
+    if (!audio_playback_queue_.push_back(std::move(task))) {
+        return false;
+    }
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     if (audio_send_queue_.empty()) {

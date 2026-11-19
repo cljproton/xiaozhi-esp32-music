@@ -1,5 +1,13 @@
 menu "Xiaozhi Assistant"
 
+config HTTPD_MAX_URI_HANDLERS
+    int "Max HTTPD URI handlers"
+    default 32
+    range 16 64
+    help
+        Maximum number of URI handlers that can be registered with the HTTP server.
+        Increase if "no slots left for registering handler" errors occur.
+
 config OTA_URL
     string "Default OTA URL"
     default "https://api.tenclass.net/xiaozhi/ota/"
@@ -1095,6 +1103,13 @@ config USE_AUDIO_DEBUGGER
     default n
     help
         Enable audio debugger, send audio data through UDP to the host machine
+
+config ESP_AUDIO_SIMPLE_PLAYER_HTTP_EN
+    bool "Enable HTTP IO stream"
+    default n
+    help
+        Disable the ESP Audio Simple Player built-in HTTP IO and register the
+        application-provided HTTP IO with Basic Auth callback instead.
 
 menu "WiFi Configuration Method"
     help

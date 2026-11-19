@@ -21,6 +21,9 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 
+// Forward declaration
+class PlaybackScheduler;
+
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
 #define MAIN_EVENT_SEND_AUDIO           (1 << 1)
@@ -47,6 +50,33 @@ enum AecMode {
 
 class Application {
 public:
+    struct MusicSource {
+        std::string audio_url;
+        std::string username;
+        std::string password;
+        std::string title;
+    };
+
+    enum class MusicPlayMode {
+        kSequential,
+        kShuffle,
+    };
+
+    struct MusicStatus {
+        bool active = false;
+        bool paused = false;
+        bool single = false;
+        int source_index = -1;
+        int track_index = -1;
+        int total = 0;
+        bool truncated = false;
+        MusicPlayMode mode = MusicPlayMode::kSequential;
+        std::string title;
+        int position_ms = 0;
+        int duration_ms = 0;
+        int volume = 0;
+    };
+
     static Application& GetInstance() {
         static Application instance;
         return instance;
@@ -71,7 +101,7 @@ public:
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
-    
+
     /**
      * Request state transition
      * Returns true if transition was successful
@@ -91,6 +121,8 @@ public:
     void DismissAlert();
 
     void AbortSpeaking(AbortReason reason);
+    // 播放前打断正在进行的 AI 语音，使 StartNotification 的 Idle 检查能够通过
+    void InterruptSpeakingForPlayback();
 
     /**
      * Toggle chat state (event-based, thread-safe)
@@ -110,17 +142,70 @@ public:
      */
     void StopListening();
 
+    /**
+     * Start notification/music playback from an external caller (e.g. MCP tool).
+     * Reuses the notification playback pipeline (NotifyPlayer -> AudioService).
+     * `title` is displayed on the device screen while the audio plays.
+     * Returns true if playback was successfully started, false otherwise.
+     */
+    bool StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles,
+                           const std::string& username = "", const std::string& password = "",
+                           const std::string& title = "",
+                           uint64_t start_byte_pos = 0, uint32_t start_pos_ms = 0,
+                           uint32_t start_duration_ms = 0);
+
+    // force=true 用于显式停止/切新歌；暂停期间内部流程调用时保留快照与状态
+    void StopNotification(bool force = false);
+
+    /**
+     * Start music playback now; drops any queued follow-up tracks.
+     * Returns true if playback was successfully started.
+     */
+    bool StartMusic(const MusicSource& source);
+
+    // 播放整个曲目列表（网页播放器与 AI 共用同一会话）
+    // Returns true if playback was successfully started.
+    bool PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_index, MusicPlayMode mode,
+                           int start_index = 0, bool truncated = false);
+    // Play a specific track in the current playlist
+    // Returns true if playback was successfully started.
+    bool PlayMusicTrackAt(int index);
+    // Play next track in playlist
+    // Returns true if playback was successfully started.
+    bool PlayNextMusic();
+    // Play previous track in playlist
+    // Returns true if playback was successfully started.
+    bool PlayPrevMusic();
+    void StopMusicPlayback();
+    bool PauseMusic();
+    bool ResumeMusic();
+    bool SeekMusic(uint32_t time_ms);
+    void SetMusicMode(MusicPlayMode mode);
+    // NVS 持久化的播放模式与选中音源（"music" 命名空间）
+    static MusicPlayMode LoadPersistedMusicMode();
+    static int LoadSelectedSource();
+    static void SaveSelectedSource(int index);
+    MusicStatus GetMusicStatus() const;
+
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
+    void SendTtsFinished();
+    bool IsNotifyPlayerBusy() const;
+    NotifyPlayer& GetNotifyPlayer() { return notify_player_; }
+
+    // PlaybackScheduler 访问（实现在 application.cc，避免头文件循环依赖）
+    PlaybackScheduler& GetPlaybackScheduler();
+    const PlaybackScheduler& GetPlaybackScheduler() const;
+
     void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
-    
+
     /**
      * Reset protocol resources (thread-safe)
      * Can be called from any task to release resources allocated after network connected
@@ -145,7 +230,42 @@ private:
     std::string startup_wake_word_hint_message_;
     AudioService audio_service_;
     NotifyPlayer notify_player_;
+    std::unique_ptr<PlaybackScheduler> playback_scheduler_;
     uint32_t notification_playback_id_ = 0;
+
+    // 音乐播放会话：playlist_ 为音源全部曲目，order_ 为按模式生成的播放顺序
+    mutable std::mutex music_mutex_;
+    std::vector<MusicSource> music_playlist_;
+    std::vector<size_t> music_order_;
+    size_t music_cursor_ = 0;
+    int music_source_index_ = -1;
+    MusicPlayMode music_mode_ = MusicPlayMode::kSequential;
+    bool music_active_ = false;
+    bool music_paused_ = false;
+    bool music_single_ = false;
+    int music_fail_streak_ = 0;
+    bool music_truncated_ = false;
+    int music_position_ms_ = 0;
+
+    // 单例暂停快照：一次性分配在 PSRAM，原地覆盖复用，不存字符串
+    struct PlaybackSnapshot {
+        uint32_t token = 0;
+        int source_index = -1;
+        int cursor = -1;
+        uint32_t position_ms = 0;
+        uint32_t duration_ms = 0;
+        uint64_t byte_pos = 0;
+        uint64_t file_size = 0;
+        uint8_t mode = 0;
+        bool valid = false;
+    };
+    PlaybackSnapshot* playback_snapshot_ = nullptr;
+
+    void ClearMusicSessionLocked();
+    // 单例快照：采集当前 IO 信息 / 更新目标位置 / 按快照重启（暂停与拖拽共用）
+    bool CapturePlaybackSnapshot();
+    void UpdateSnapshotPositionLocked(uint32_t time_ms);
+    bool RestartFromSnapshot();
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -157,6 +277,7 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    bool is_tts_playing_ = false;  // 是否正在播放 TTS
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -177,8 +298,6 @@ private:
     void ConfigureWakeWordForListening();
     void ShowStartupWakeWordHint();
     void HideStartupWakeWordHint();
-    void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
-    void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
 
     // Activation task (runs in background)
@@ -191,7 +310,7 @@ private:
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
-    
+
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);
 };

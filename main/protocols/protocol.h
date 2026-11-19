@@ -71,6 +71,8 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    // 通知 AI 侧 TTS 播放完成
+    virtual void SendTtsFinished() {}
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

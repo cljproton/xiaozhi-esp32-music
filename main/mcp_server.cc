@@ -12,12 +12,16 @@
 #include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <optional>
+#include <random>
 #include <string_view>
+#include <future>
 
 #include "application.h"
+#include "playback_scheduler.h"
 #include "board.h"
 #include "display.h"
 #include "lvgl_image.h"
@@ -25,6 +29,12 @@
 #include "settings.h"
 
 #define TAG "MCP"
+
+// 将 PlaybackResult 转换为 MCP ToolResult
+static ToolResult ToToolResult(const PlaybackResult& r) {
+    if (r.success) return true;
+    return std::unexpected(r.error.empty() ? "Playback failed" : r.error);
+}
 
 McpServer::McpServer() {}
 
@@ -129,6 +139,186 @@ void McpServer::AddCommonTools() {
                 });
     }
 #endif
+
+    AddTool("self.music.sources",
+            "List the WebDAV music sources currently configured on this device. "
+            "Read-only: add, edit or delete sources on the device web page, not through this tool. "
+            "Call this before playing music so you know which sources are available.",
+            PropertyList(),
+            [this](const PropertyList& properties) -> ToolResult {
+                Settings settings("music", true);
+                auto sources_json = settings.GetString("sources", "[]");
+                CJsonUniquePtr sources(cJSON_Parse(sources_json.c_str()));
+                if (sources == nullptr || !cJSON_IsArray(sources.get())) {
+                    sources.reset(cJSON_CreateArray());
+                }
+                CJsonStringUniquePtr printed(cJSON_PrintUnformatted(sources.get()));
+                std::string json = printed ? std::string(printed.get()) : std::string("[]");
+                return json;
+            });
+
+    AddTool("self.music.play",
+            "Play a single music track from a remote WebDAV source (远程播放). `source` is a JSON object: "
+            "{\"type\":\"webdav\",\"base_url\":\"...\",\"username\":\"...\",\"password\":\"...\",\"path\":\"...\"} "
+            "for a WebDAV source. "
+            "Use `self.music.play_all` to play every track of a source.",
+            PropertyList({Property("source", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                return PlayMusic(properties["source"].value<std::string>());
+            });
+
+    AddTool("self.music.play_all",
+            "Play all music from a remote WebDAV source (远程播放/网盘音乐). "
+            "If `source` is omitted, the source selected on the device web page (saved on the device) is used. "
+            "By default the saved playback mode (sequential/shuffle) is used; set `random` to true to switch to shuffle. "
+            "`source` is a JSON object: "
+            "{\"type\":\"webdav\",\"base_url\":\"...\",\"username\":\"...\",\"password\":\"...\",\"path\":\"...\"} "
+            "for a WebDAV source.",
+            PropertyList({Property("source", kPropertyTypeString, ""),
+                          Property("random", kPropertyTypeBoolean, false)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                return PlayMusicAll(properties["source"].value<std::string>(),
+                                    properties["random"].value<bool>());
+            });
+
+    AddTool("self.music.count",
+            "Count the number of music files in a WebDAV source.",
+            PropertyList({Property("source", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                auto tracks = ListMusicTracks(properties["source"].value<std::string>());
+                if (!tracks) {
+                    return std::unexpected(tracks.error());
+                }
+                return static_cast<int>(tracks->size());
+            });
+
+    AddTool("self.music.next", "Skip to the next track in the current playlist.", PropertyList(),
+            [this](const PropertyList&) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::NEXT;
+                cmd->priority = PlaybackPriority::MUSIC;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.prev", "Go back to the previous track.", PropertyList(),
+            [this](const PropertyList&) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::PREV;
+                cmd->priority = PlaybackPriority::MUSIC;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.status", "Report what music is playing right now.", PropertyList(),
+            [this](const PropertyList&) -> ToolResult {
+                auto status = Application::GetInstance().GetMusicStatus();
+                if (!status.active) {
+                    return std::string("No music is playing");
+                }
+                char buf[256];
+                snprintf(buf, sizeof(buf), "%s, track %d of %d, %s mode",
+                         status.title.c_str(), status.track_index + 1, status.total,
+                         status.mode == Application::MusicPlayMode::kShuffle ? "shuffle" : "sequential");
+                return std::string(buf);
+            });
+
+    AddTool("self.music.play_source",
+            "播放远程音源（WebDAV/网盘/网络音乐）中的全部音乐。`index` 是已配置音源的序号（从 0 开始，"
+            "先用 self.music.sources 查看有哪些音源）。`random` 为 true 时随机播放。",
+            PropertyList({Property("index", kPropertyTypeInteger),
+                          Property("random", kPropertyTypeBoolean, false)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                return PlayMusicSourceAt(properties["index"].value<int>(),
+                                         properties["random"].value<bool>());
+            });
+
+    AddTool("self.music.mode",
+            "设置远程播放的播放顺序：shuffle 为随机播放，sequential 为顺序播放。",
+            PropertyList({Property("mode", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto mode = properties["mode"].value<std::string>();
+                if (mode != "shuffle" && mode != "sequential") {
+                    return std::unexpected("mode 只能是 shuffle 或 sequential");
+                }
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::MODE;
+                cmd->priority = PlaybackPriority::MUSIC;
+                cmd->mode = mode == "shuffle" ? Application::MusicPlayMode::kShuffle : Application::MusicPlayMode::kSequential;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.pause", "暂停当前正在播放的远程音乐。", PropertyList(),
+            [](const PropertyList&) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::PAUSE;
+                cmd->priority = PlaybackPriority::MUSIC;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.resume", "恢复播放已暂停的远程音乐。", PropertyList(),
+            [](const PropertyList&) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::RESUME;
+                cmd->priority = PlaybackPriority::MUSIC;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.stop", "停止播放远程音乐。", PropertyList(),
+            [](const PropertyList&) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::STOP;
+                cmd->priority = PlaybackPriority::SYSTEM;
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.seek", "跳转到指定播放位置（毫秒）。", PropertyList(
+        {Property("time_ms", kPropertyTypeInteger, 0, 0, INT_MAX)}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::SEEK;
+                cmd->priority = PlaybackPriority::MUSIC;
+                cmd->seek_ms = properties["time_ms"].value<int>();
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.volume", "设置播放音量 (0-100)。", PropertyList(
+        {Property("volume", kPropertyTypeInteger, 0, 100)}),
+            [](const PropertyList& properties) -> ToolResult {
+                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+                auto cmd = std::make_unique<PlaybackCommand>();
+                cmd->type = PlaybackCommandType::VOLUME;
+                cmd->priority = PlaybackPriority::MUSIC;
+                cmd->volume = properties["volume"].value<int>();
+                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
+            });
+
+    AddTool("self.music.search",
+            "在远程音源中按歌名或歌手名模糊查找音乐（对曲目标题做包含匹配）。"
+            "返回匹配曲目列表（含曲目序号 index 和标题 title）。"
+            "若匹配到多首，把列表读给用户并追问要播放哪一首；用户选定后用 self.music.play_track 播放。"
+            "`source` 为音源序号，默认 0。",
+            PropertyList({Property("keyword", kPropertyTypeString),
+                          Property("source", kPropertyTypeInteger, 0)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                return SearchMusic(properties["keyword"].value<std::string>(),
+                                   properties["source"].value<int>());
+            });
+
+    AddTool("self.music.play_track",
+            "播放远程音源中的某一首曲目。`source` 为音源序号，`index` 为曲目序号"
+            "（self.music.search 返回的 index）。",
+            PropertyList({Property("source", kPropertyTypeInteger, 0),
+                          Property("index", kPropertyTypeInteger, 0, 0, 499)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                return PlayMusicTrackAt(properties["source"].value<int>(),
+                                        properties["index"].value<int>());
+            });
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), std::make_move_iterator(original_tools.begin()),
@@ -338,6 +528,576 @@ void McpServer::AddUserOnlyTools() {
                         settings.SetString("download_url", url);
                         return true;
                     });
+}
+
+namespace {
+
+std::string BasicAuthHeaderValue(const std::string& username, const std::string& password) {
+    const std::string credentials = username + ":" + password;
+    size_t dlen = 0;
+    mbedtls_base64_encode((unsigned char*)nullptr, 0, &dlen,
+                           (const unsigned char*)credentials.data(), credentials.size());
+    std::string encoded(dlen, '\0');
+    size_t olen = 0;
+    mbedtls_base64_encode((unsigned char*)encoded.data(), encoded.size(), &olen,
+                           (const unsigned char*)credentials.data(), credentials.size());
+    // mbedtls 把终止 NUL 计入 olen，留在头部会污染请求
+    encoded.resize(strlen(encoded.c_str()));
+    return "Basic " + encoded;
+}
+
+}  // namespace
+
+// base_url 统一按 A 语义处理：只取 scheme://host[:port]，路径交给 path 与 href
+std::string McpServer::UrlOrigin(const std::string& url) {
+    auto scheme = url.find("://");
+    if (scheme == std::string::npos) {
+        return url;
+    }
+    size_t host_end = url.find('/', scheme + 3);
+    return host_end == std::string::npos ? url : url.substr(0, host_end);
+}
+
+namespace {
+
+bool IsAbsoluteUrl(const std::string& url) {
+    return url.starts_with("http://") || url.starts_with("https://");
+}
+
+// path 视为服务器根路径：保证以单个 '/' 开头
+std::string NormalizePath(const std::string& path) {
+    std::string out;
+    for (char c : path) {
+        if (c == '/' && !out.empty() && out.back() == '/') {
+            continue;
+        }
+        out.push_back(c);
+    }
+    if (out.empty()) {
+        return "/";
+    }
+    if (out.front() != '/') {
+        out.insert(out.begin(), '/');
+    }
+    return out;
+}
+
+std::string JoinUrl(const std::string& origin, const std::string& path) {
+    return origin + NormalizePath(path);
+}
+
+// WebDAV 的 href 是百分号编码的，显示前还原成可读文字
+std::string UrlDecode(const std::string& in) {
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int hi = hex(in[i + 1]);
+            int lo = hex(in[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
+// 已配置的 WebDAV 音源列表（每个元素是源 JSON 字符串）
+std::vector<std::string> LoadMusicSources() {
+    Settings settings("music", true);
+    CJsonUniquePtr sources(cJSON_Parse(settings.GetString("sources", "[]").c_str()));
+    std::vector<std::string> result;
+    if (sources == nullptr || !cJSON_IsArray(sources.get())) {
+        return result;
+    }
+    cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, sources.get()) {
+        if (item == nullptr || !cJSON_IsObject(item)) {
+            continue;
+        }
+        CJsonStringUniquePtr printed(cJSON_PrintUnformatted(item));
+        if (printed != nullptr) {
+            result.emplace_back(printed.get());
+        }
+    }
+    return result;
+}
+
+bool MusicSourceAt(const std::vector<std::string>& sources, int index, std::string* out) {
+    if (index < 0 || index >= static_cast<int>(sources.size())) {
+        return false;
+    }
+    *out = sources[index];
+    return true;
+}
+
+std::string GetDeviceIp() {
+    CJsonUniquePtr json(cJSON_Parse(Board::GetInstance().GetBoardJson().c_str()));
+    if (json == nullptr) {
+        return "";
+    }
+    auto ip = cJSON_GetObjectItem(json.get(), "ip");
+    if (ip == nullptr || !cJSON_IsString(ip) || strlen(ip->valuestring) == 0) {
+        return "";
+    }
+    return ip->valuestring;
+}
+
+// 无音源时的引导话术：提示用户到设备网页端配置
+std::string NoMusicSourceError() {
+    std::string ip = GetDeviceIp();
+    if (!ip.empty()) {
+        return "未配置音乐音源。请在浏览器打开设备网页端 http://" + ip +
+               "/ ，在「管理音源」中添加 WebDAV 音源后再试。";
+    }
+    return "未配置音乐音源。请在浏览器打开设备网页端，在「管理音源」中添加 WebDAV 音源后再试。";
+}
+
+std::vector<std::string> ExtractXmlHrefs(const std::string& xml) {
+    std::vector<std::string> hrefs;
+    size_t pos = 0;
+    while (true) {
+        // OpenList (and some servers) prefix element names with a namespace
+        // prefix, e.g. "<D:response><D:href>/path</D:href>...", so accept both.
+        size_t start = xml.find("<D:href>", pos);
+        size_t start_len = 8;
+        if (start == std::string::npos) {
+            start = xml.find("<href>", pos);
+            start_len = 7;
+        }
+        if (start == std::string::npos) {
+            break;
+        }
+        size_t end = xml.find("</D:href>", start);
+        size_t end_len = 9;
+        if (end == std::string::npos) {
+            end = xml.find("</href>", start);
+            end_len = 7;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        std::string href = xml.substr(start + start_len, end - (start + start_len));
+        size_t amp_pos = href.find("&");
+        while (amp_pos != std::string::npos) {
+            size_t semi = href.find(";", amp_pos);
+            if (semi == std::string::npos) {
+                break;
+            }
+            std::string ent = href.substr(amp_pos, semi - amp_pos + 1);
+            std::string rep;
+            if (ent == "&amp;") {
+                rep = "&";
+            } else if (ent == "&lt;") {
+                rep = "<";
+            } else if (ent == "&gt;") {
+                rep = ">";
+            } else if (ent == "&quot;") {
+                rep = "\"";
+            } else if (ent == "&apos;") {
+                rep = "'";
+            }
+            if (!rep.empty()) {
+                href.replace(amp_pos, ent.size(), rep);
+            }
+            amp_pos = href.find("&", amp_pos + rep.size());
+        }
+        hrefs.push_back(href);
+        pos = end + end_len;
+    }
+    return hrefs;
+}
+}  // namespace
+
+std::expected<std::string, std::string> McpServer::ListWebdav(const std::string& source) {
+    CJsonUniquePtr source_json(cJSON_Parse(source.c_str()));
+    if (source_json == nullptr || !cJSON_IsObject(source_json.get())) {
+        return std::unexpected("Invalid source: expected a JSON object");
+    }
+    auto type = cJSON_GetObjectItem(source_json.get(), "type");
+    if (type == nullptr || !cJSON_IsString(type) || strlen(type->valuestring) == 0) {
+        return std::unexpected("Invalid source: missing type");
+    }
+    if (strcmp(type->valuestring, "webdav") != 0) {
+        return std::unexpected("Invalid source: list only supported for webdav type");
+    }
+    auto base_url_item = cJSON_GetObjectItem(source_json.get(), "base_url");
+    auto username_item = cJSON_GetObjectItem(source_json.get(), "username");
+    auto password_item = cJSON_GetObjectItem(source_json.get(), "password");
+    auto path_item = cJSON_GetObjectItem(source_json.get(), "path");
+    if (base_url_item == nullptr || !cJSON_IsString(base_url_item) || strlen(base_url_item->valuestring) == 0) {
+        return std::unexpected("Invalid source: webdav type requires base_url");
+    }
+    if (username_item == nullptr || !cJSON_IsString(username_item) || strlen(username_item->valuestring) == 0) {
+        return std::unexpected("Invalid source: webdav type requires username");
+    }
+    if (password_item == nullptr || !cJSON_IsString(password_item) || strlen(password_item->valuestring) == 0) {
+        return std::unexpected("Invalid source: webdav type requires password");
+    }
+    if (path_item == nullptr || !cJSON_IsString(path_item) || strlen(path_item->valuestring) == 0) {
+        return std::unexpected("Invalid source: webdav type requires path");
+    }
+    std::string origin = McpServer::UrlOrigin(base_url_item->valuestring);
+    std::string path = path_item->valuestring;
+    std::string url = JoinUrl(origin, path);
+    std::string username = username_item->valuestring;
+    std::string password = password_item->valuestring;
+
+    // 重启后 socket/WiFi 可能尚未稳定，连接失败时重试一次（200ms 退避）
+    std::string body;
+    std::string last_error;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+        if (!http) {
+            last_error = "Failed to create HTTP client";
+            continue;
+        }
+        http->SetTimeout(5000);
+        if (!username.empty() && !password.empty()) {
+            http->SetHeader("Authorization", BasicAuthHeaderValue(username, password));
+        }
+        http->SetHeader("Accept", "application/xml");
+        http->SetHeader("Content-Type", "application/xml");
+        http->SetHeader("Depth", "1");
+        // PROPFIND requires an XML request body describing the query.
+        http->SetContent(std::string("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                                     "<D:propfind xmlns:D=\"DAV:\">"
+                                     "<D:prop><D:displayname/></D:prop>"
+                                     "</D:propfind>"));
+        if (auto opened = http->Open("PROPFIND", url); !opened) {
+            last_error = "Failed to open URL: " + url + " (" + opened.error().ToString() + ")";
+            http->Close();
+            continue;
+        }
+        auto status = http->GetStatusCode();
+        if (!status) {
+            last_error = status.error().ToString();
+            http->Close();
+            continue;
+        }
+        if (*status < 200 || *status >= 300) {
+            last_error = "WebDAV PROPFIND failed with status " + std::to_string(*status);
+            http->Close();
+            continue;
+        }
+        body = http->ReadAll();
+        http->Close();
+        last_error.clear();
+        break;
+    }
+    if (!last_error.empty()) {
+        return std::unexpected(last_error);
+    }
+
+    std::vector<std::string> hrefs = ExtractXmlHrefs(body);
+    CJsonUniquePtr entries(cJSON_CreateArray());
+    if (entries != nullptr) {
+        for (const auto& href : hrefs) {
+            cJSON_AddItemToArray(entries.get(), cJSON_CreateString(href.c_str()));
+        }
+    }
+    CJsonStringUniquePtr printed(cJSON_PrintUnformatted(entries.get()));
+    std::string json = printed ? std::string(printed.get()) : std::string("[]");
+    return json;
+}
+
+ToolResult McpServer::PlayMusic(const std::string& source) {
+    CJsonUniquePtr source_json(cJSON_Parse(source.c_str()));
+    if (source_json == nullptr || !cJSON_IsObject(source_json.get())) {
+        return std::unexpected("Invalid source: expected a JSON object");
+    }
+    auto type = cJSON_GetObjectItem(source_json.get(), "type");
+    if (type == nullptr || !cJSON_IsString(type) || strlen(type->valuestring) == 0) {
+        return std::unexpected("Invalid source: missing type");
+    }
+    std::string audio_url;
+    std::string username;
+    std::string password;
+    std::string title;
+    if (strcmp(type->valuestring, "webdav") == 0) {
+        auto base_url_item = cJSON_GetObjectItem(source_json.get(), "base_url");
+        auto username_item = cJSON_GetObjectItem(source_json.get(), "username");
+        auto password_item = cJSON_GetObjectItem(source_json.get(), "password");
+        auto path_item = cJSON_GetObjectItem(source_json.get(), "path");
+        if (base_url_item == nullptr || !cJSON_IsString(base_url_item) ||
+            strlen(base_url_item->valuestring) == 0) {
+            return std::unexpected("Invalid source: webdav type requires base_url");
+        }
+        if (username_item == nullptr || !cJSON_IsString(username_item) ||
+            strlen(username_item->valuestring) == 0) {
+            return std::unexpected("Invalid source: webdav type requires username");
+        }
+        if (password_item == nullptr || !cJSON_IsString(password_item) ||
+            strlen(password_item->valuestring) == 0) {
+            return std::unexpected("Invalid source: webdav type requires password");
+        }
+        if (path_item == nullptr || !cJSON_IsString(path_item) || strlen(path_item->valuestring) == 0) {
+            return std::unexpected("Invalid source: webdav type requires path");
+        }
+        std::string base_url = base_url_item->valuestring;
+        std::string path = path_item->valuestring;
+        audio_url = JoinUrl(McpServer::UrlOrigin(base_url), path);
+        username = username_item->valuestring;
+        password = password_item->valuestring;
+        title = NormalizePath(path);
+        size_t last_slash = title.find_last_of('/');
+        if (last_slash != std::string::npos) {
+            title = UrlDecode(title.substr(last_slash + 1));
+        }
+    } else {
+        return std::unexpected("Invalid source type: expected webdav");
+    }
+
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() != kDeviceStateIdle) {
+        return std::unexpected("Device is not idle; cannot start music playback");
+    }
+    Application::MusicSource music_source;
+    music_source.audio_url = std::move(audio_url);
+    music_source.username = std::move(username);
+    music_source.password = std::move(password);
+    music_source.title = std::move(title);
+    if (!app.StartMusic(music_source)) {
+        return std::unexpected("Failed to start music playback");
+    }
+    return true;
+}
+
+__attribute__((noinline)) std::expected<std::vector<Application::MusicSource>, std::string>
+McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
+    auto listing = ListWebdav(source);
+    if (!listing) {
+        return std::unexpected(listing.error());
+    }
+    CJsonUniquePtr source_json(cJSON_Parse(source.c_str()));
+    std::string origin;
+    std::string username;
+    std::string password;
+    if (source_json != nullptr && cJSON_IsObject(source_json.get())) {
+        auto base_url_item = cJSON_GetObjectItem(source_json.get(), "base_url");
+        auto username_item = cJSON_GetObjectItem(source_json.get(), "username");
+        auto password_item = cJSON_GetObjectItem(source_json.get(), "password");
+        if (base_url_item != nullptr && cJSON_IsString(base_url_item)) {
+            origin = McpServer::UrlOrigin(base_url_item->valuestring);
+        }
+        if (username_item != nullptr && cJSON_IsString(username_item)) {
+            username = username_item->valuestring;
+        }
+        if (password_item != nullptr && cJSON_IsString(password_item)) {
+            password = password_item->valuestring;
+        }
+    }
+
+    constexpr size_t kMaxMusicTracks = 500;
+    std::vector<Application::MusicSource> tracks;
+    CJsonUniquePtr entries(cJSON_Parse(listing->c_str()));
+    if (entries != nullptr && cJSON_IsArray(entries.get())) {
+        const int count = cJSON_GetArraySize(entries.get());
+        for (int i = 0; i < count; ++i) {
+            auto item = cJSON_GetArrayItem(entries.get(), i);
+            if (item == nullptr || !cJSON_IsString(item)) {
+                continue;
+            }
+            std::string href = item->valuestring;
+            std::string lower = href;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            static const char* kAudioExtensions[] = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus",
+                                                      "aiff"};
+            bool is_audio = false;
+            for (const auto& ext : kAudioExtensions) {
+                std::string ext_lower = ext;
+                std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                if (lower.size() > ext_lower.size() &&
+                    lower.compare(lower.size() - ext_lower.size(), ext_lower.size(), ext_lower) == 0) {
+                    is_audio = true;
+                    break;
+                }
+            }
+            if (!is_audio) {
+                continue;
+            }
+            if (tracks.size() >= kMaxMusicTracks) {
+                if (truncated != nullptr) {
+                    *truncated = true;
+                }
+                break;
+            }
+            Application::MusicSource track;
+            track.audio_url = IsAbsoluteUrl(href) ? href : JoinUrl(origin, href);
+            track.username = username;
+            track.password = password;
+            size_t slash = href.find_last_of('/');
+            track.title = UrlDecode(href.substr(slash + 1));
+            tracks.push_back(std::move(track));
+        }
+    }
+    return tracks;
+}
+
+__attribute__((noinline)) ToolResult McpServer::PlayMusicAll(const std::string& source, bool random) {
+    // 未指定音源时回退到 NVS 里保存的选中音源
+    std::string resolved_source = source;
+    if (resolved_source.empty()) {
+        auto sources = LoadMusicSources();
+        if (sources.empty()) {
+            return std::unexpected(NoMusicSourceError());
+        }
+        if (!MusicSourceAt(sources, Application::LoadSelectedSource(), &resolved_source)) {
+            return std::unexpected("已保存的音源序号超出范围（共 " +
+                                   std::to_string(sources.size()) + " 个）");
+        }
+    }
+    // random=true 视为显式设置随机模式并持久化；否则读取 NVS 中保存的模式
+    if (random) {
+        Application::GetInstance().SetMusicMode(Application::MusicPlayMode::kShuffle);
+    }
+    bool truncated = false;
+    auto tracks = ListMusicTracks(resolved_source, &truncated);
+    if (!tracks) {
+        return std::unexpected(tracks.error());
+    }
+    if (tracks->empty()) {
+        return std::unexpected("No audio tracks found in the source");
+    }
+
+    auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+    auto cmd = std::make_unique<PlaybackCommand>();
+    cmd->type = PlaybackCommandType::PLAY;
+    cmd->priority = PlaybackPriority::MUSIC;
+    cmd->playlist = std::move(*tracks);
+    cmd->source_index = -1;
+    cmd->mode = Application::LoadPersistedMusicMode();
+    cmd->track_index = 0;
+    (void)truncated;
+
+    return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 10000));
+}
+
+ToolResult McpServer::CountMusic(const std::string& source) {
+    auto tracks = ListMusicTracks(source);
+    if (!tracks) {
+        return std::unexpected(tracks.error());
+    }
+    return static_cast<int>(tracks->size());
+}
+
+ToolResult McpServer::PlayMusicSourceAt(int index, bool random) {
+    auto sources = LoadMusicSources();
+    if (sources.empty()) {
+        return std::unexpected(NoMusicSourceError());
+    }
+    std::string source;
+    if (!MusicSourceAt(sources, index, &source)) {
+        return std::unexpected("音源序号超出范围（共 " + std::to_string(sources.size()) + " 个）");
+    }
+    Application::SaveSelectedSource(index);  // 记住当前选中的音源
+    if (random) {
+        Application::GetInstance().SetMusicMode(Application::MusicPlayMode::kShuffle);
+    }
+    bool truncated = false;
+    auto tracks = ListMusicTracks(source, &truncated);
+    if (!tracks) {
+        return std::unexpected(tracks.error());
+    }
+    if (tracks->empty()) {
+        return std::unexpected("该音源没有音频文件");
+    }
+
+    auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+    auto cmd = std::make_unique<PlaybackCommand>();
+    cmd->type = PlaybackCommandType::PLAY;
+    cmd->priority = PlaybackPriority::MUSIC;
+    cmd->playlist = std::move(*tracks);
+    cmd->source_index = index;
+    cmd->mode = Application::LoadPersistedMusicMode();
+    cmd->track_index = 0;
+    (void)truncated;
+
+    return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 10000));
+}
+
+ToolResult McpServer::SearchMusic(const std::string& keyword, int source_index) {
+    if (keyword.empty()) {
+        return std::unexpected("keyword 不能为空");
+    }
+    auto sources = LoadMusicSources();
+    if (sources.empty()) {
+        return std::unexpected(NoMusicSourceError());
+    }
+    std::string source;
+    if (!MusicSourceAt(sources, source_index, &source)) {
+        return std::unexpected("音源序号超出范围（共 " + std::to_string(sources.size()) + " 个）");
+    }
+    auto tracks = ListMusicTracks(source);
+    if (!tracks) {
+        return std::unexpected(tracks.error());
+    }
+    auto to_lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        return text;
+    };
+    std::string lower_keyword = to_lower(keyword);
+    CJsonUniquePtr matches(cJSON_CreateArray());
+    for (size_t i = 0; i < tracks->size(); ++i) {
+        std::string title = (*tracks)[i].title;
+        if (to_lower(title).find(lower_keyword) == std::string::npos) {
+            continue;
+        }
+        CJsonUniquePtr item(cJSON_CreateObject());
+        cJSON_AddNumberToObject(item.get(), "index", static_cast<int>(i));
+        cJSON_AddStringToObject(item.get(), "title", title.c_str());
+        cJSON_AddItemToArray(matches.get(), item.get());
+        item.release();
+    }
+    CJsonStringUniquePtr printed(cJSON_PrintUnformatted(matches.get()));
+    return std::string(printed ? printed.get() : "[]");
+}
+
+ToolResult McpServer::PlayMusicTrackAt(int source_index, int track_index) {
+    auto sources = LoadMusicSources();
+    if (sources.empty()) {
+        return std::unexpected(NoMusicSourceError());
+    }
+    std::string source;
+    if (!MusicSourceAt(sources, source_index, &source)) {
+        return std::unexpected("音源序号超出范围（共 " + std::to_string(sources.size()) + " 个）");
+    }
+    bool truncated = false;
+    auto tracks = ListMusicTracks(source, &truncated);
+    if (!tracks) {
+        return std::unexpected(tracks.error());
+    }
+    if (track_index < 0 || track_index >= static_cast<int>(tracks->size())) {
+        return std::unexpected("曲目序号超出范围（共 " + std::to_string(tracks->size()) + " 首）");
+    }
+    auto mode = Application::GetInstance().GetMusicStatus().mode;
+
+    auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
+    auto cmd = std::make_unique<PlaybackCommand>();
+    cmd->type = PlaybackCommandType::PLAY;
+    cmd->priority = PlaybackPriority::MUSIC;
+    cmd->playlist = std::move(*tracks);
+    cmd->source_index = source_index;
+    cmd->mode = mode;
+    cmd->track_index = track_index;
+    (void)truncated;
+
+    return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 10000));
 }
 
 void McpServer::LogToolInventory() const {
@@ -741,12 +1501,19 @@ void McpServer::DoToolCall(McpRequestContext context, McpTool* tool, const cJSON
             return;
         }
     }
+    // Log tool call entry (only tool name, args too verbose for serial)
+    ESP_LOGI(TAG, "Tool call: %s", tool->name().c_str());
+
     // Reuse the existing application task. Context owns ID/vision after input JSON is destroyed.
     Application::GetInstance().Schedule([this, context = std::move(context), tool,
                                          arguments = std::move(arguments),
                                          response_sender = std::move(response_sender)]() {
+        uint32_t start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         auto result = tool->Call(arguments, context);
+        uint32_t elapsed_ms = xTaskGetTickCount() * portTICK_PERIOD_MS - start_ms;
         if (!result) {
+            ESP_LOGW(TAG, "Tool %s failed after %lu ms: %s", tool->name().c_str(),
+                     static_cast<unsigned long>(elapsed_ms), result.error().c_str());
             if (context.modern) {
                 std::string error = "{\"isError\":true,\"content\":[{\"type\":\"text\",\"text\":";
                 error += JsonString(result.error().c_str());
@@ -757,6 +1524,8 @@ void McpServer::DoToolCall(McpRequestContext context, McpTool* tool, const cJSON
             }
             return;
         }
+        ESP_LOGI(TAG, "Tool %s success in %lu ms", tool->name().c_str(),
+                 static_cast<unsigned long>(elapsed_ms));
         ReplyResult(context, *result, response_sender);
     });
 }

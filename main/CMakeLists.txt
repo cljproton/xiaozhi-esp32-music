@@ -4,6 +4,7 @@ set(SOURCES "audio/audio_codec.cc"
             "audio/audio_service.cc"
             "audio/demuxer/ogg_demuxer.cc"
             "notify/notify_player.cc"
+            "playback_scheduler.cc"
             "audio/codecs/no_audio_codec.cc"
             "audio/codecs/box_audio_codec.cc"
             "audio/codecs/es8311_audio_codec.cc"
@@ -43,7 +44,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui")
 
 # Add board common files
 list(APPEND SOURCES
@@ -1021,6 +1022,16 @@ endif()
 if (CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING)
     list(APPEND SOURCES "boards/common/blufi.cpp")
 endif ()
+
+# WebSocket Control Server + Handlers + WebUI (common for all boards with display)
+list(APPEND SOURCES
+    "protocols/ws_control_server.cc"
+    "handlers/handler_registry.cc"
+    "handlers/music_api_handler.cc"
+    "handlers/system_api_handler.cc"
+    "web_ui/WebUIRenderer.cc"
+)
+
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ZH_CN)
     set(LANG_DIR "zh-CN")
@@ -1231,6 +1242,7 @@ idf_component_register(SRCS ${SOURCES}
                         bt
                         fatfs
                         xiaozhi-fonts
+                        espressif__esp_audio_simple_player
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 

@@ -86,6 +86,7 @@ private:
                      uint8_t* output);
 
     bool SendText(const std::string& text) override;
+    void SendTtsFinished() override;
     std::string GetHelloMessage();
 };
 

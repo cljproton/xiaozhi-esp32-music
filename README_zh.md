@@ -20,6 +20,7 @@
 - MQTT 和 BluFi 加密已迁移到 PSA Crypto，同时完成了 IDF 6 组件拆分及第三方依赖兼容处理。
 - 加固了音频流水线并发、MQTT/UDP 数据包校验和发布矩阵选择逻辑。
 - 使用 ESP-SR 2.4.7 时，ESP32-P4 Rev1 和 Rev3 均支持 IDF 6。
+- 新增 WebDAV 音乐播放器：网页端管理音源、分页浏览曲目、播放控制与进度跳转，AI 通过 `self.music.*` 工具共用同一播放会话。播放模式和选中音源保存在 NVS 中。详见 [WebDAV 音乐播放器](docs/music-player_zh.md)。
 
 ### 已实现功能
 
@@ -36,6 +37,7 @@
 - 通过设备端 MCP 实现设备控制（音量、灯光、电机、GPIO 等）
 - 通过云端 MCP 扩展大模型能力（智能家居控制、PC桌面操作、知识搜索、邮件收发等）
 - 自定义唤醒词、字体、表情与聊天背景，支持网页端在线修改 ([自定义Assets生成器](https://github.com/78/xiaozhi-assets-generator))
+- 从 WebDAV 音源播放远程音乐，网页播放器与 AI 工具共用播放会话；支持分页曲目列表、搜索、随机/顺序播放、暂停恢复和进度跳转
 
 ## 硬件
 
@@ -130,6 +132,7 @@
 - [MCP 协议交互流程](docs/mcp-protocol_zh.md) - 设备端 MCP 协议的实现方式
 - [MQTT + UDP 混合通信协议文档](docs/mqtt-udp_zh.md)
 - [一份详细的 WebSocket 通信协议文档](docs/websocket_zh.md)
+- [WebDAV 音乐播放器：音源配置、网页 API、AI 工具与播放实现](docs/music-player_zh.md)
 
 ## 大模型配置
 

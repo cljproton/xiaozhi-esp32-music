@@ -31,12 +31,26 @@ class McpServerTest(unittest.TestCase):
                 #define _APPLICATION_H_
                 #define SETTINGS_H
                 #define BOARD_NAME "host-test"
+                #include <cstdint>
                 #include <cstdlib>
+                #include <expected>
                 #include <functional>
                 #include <iostream>
                 #include <string>
                 #include <utility>
                 #include <vector>
+                enum DeviceState {
+                    kDeviceStateUnknown, kDeviceStateStarting, kDeviceStateWifiConfiguring, kDeviceStateIdle,
+                    kDeviceStateConnecting, kDeviceStateListening, kDeviceStateSpeaking, kDeviceStateNotifying,
+                    kDeviceStateUpgrading, kDeviceStateActivating, kDeviceStateAudioTesting, kDeviceStateFatalError,
+                };
+                struct NotifySubtitle { uint32_t start_ms = 0; std::string text; };
+                struct MusicSource {
+                    std::string audio_url;
+                    std::string username;
+                    std::string password;
+                    std::string title;
+                };
                 class Application {
                 public:
                     std::vector<std::function<void()>> pending;
@@ -59,6 +73,17 @@ class McpServerTest(unittest.TestCase):
                     }
                     void Reboot() { std::abort(); }
                     bool UpgradeFirmware(const std::string&) { std::abort(); }
+                    DeviceState GetDeviceState() const { return kDeviceStateIdle; }
+                    void StartNotification(std::string audio_url,
+                                           std::vector<NotifySubtitle> subtitles,
+                                           const std::string& username = "",
+                                           const std::string& password = "",
+                                           const std::string& title = "") {
+                        started_audio_url = std::move(audio_url);
+                    }
+                    void StartMusic(const MusicSource& source) { started_audio_url = source.audio_url; }
+                    void QueueMusic(const MusicSource& source) { started_audio_url = source.audio_url; }
+                    std::string started_audio_url;
                 };
                 class Settings {
                 public:
@@ -66,6 +91,7 @@ class McpServerTest(unittest.TestCase):
                     int GetInt(const std::string&, int fallback) { return fallback; }
                     void SetInt(const std::string&, int) {}
                     void SetString(const std::string&, const std::string&) {}
+                    std::string GetString(const std::string&, const std::string& = "") { return ""; }
                 };
                 inline void vTaskDelay(int) { std::abort(); }
                 #define pdMS_TO_TICKS(value) (value)
@@ -115,6 +141,20 @@ class McpServerTest(unittest.TestCase):
                         return url + "|" + token + "|" + question;
                     }
                 };
+                class FakeHttp {
+                public:
+                    std::expected<bool, std::string> Open(const char*, const char*) { return true; }
+                    void SetTimeout(int) {}
+                    void SetHeader(const char*, const char*) {}
+                    void SetContent(const std::string&) {}
+                    std::expected<int, std::string> GetStatusCode() { return 200; }
+                    std::string ReadAll() { return ""; }
+                    void Close() {}
+                };
+                class FakeNetwork {
+                public:
+                    FakeHttp* CreateHttp(int) { static FakeHttp http; return &http; }
+                };
                 class Board {
                 public:
                     static Board& GetInstance() { static Board board; return board; }
@@ -126,6 +166,7 @@ class McpServerTest(unittest.TestCase):
                         static HostCamera camera;
                         return &camera;
                     }
+                    FakeNetwork* GetNetwork() { static FakeNetwork network; return &network; }
                 };
             ''',
             "display.h": "",
@@ -143,6 +184,9 @@ class McpServerTest(unittest.TestCase):
                 auto& server = McpServer::GetInstance();
                 const std::string mode = argc > 2 ? argv[2] : "";
                 PressToTalkMcpTool press_to_talk;
+                if (mode == "music") {
+                    server.AddCommonTools();
+                }
                 if (mode != "empty" && mode != "user-only") {
                     press_to_talk.Initialize();
                     server.AddTool("test.error", "Return a tool error",
@@ -290,6 +334,40 @@ class McpServerTest(unittest.TestCase):
     def test_missing_argument_keeps_error_code(self):
         response, = self.responses([self.call(7, "self.set_press_to_talk", {})])
         self.assert_error(response, 7, -32602, "Missing required argument: mode")
+
+    def test_music_play_starts_playback(self):
+        response, = self.responses(
+            [self.call(11, "self.music.play",
+                      {"source": "{\"type\":\"webdav\",\"base_url\":\"http://music.example.com/dav\","
+                                 "\"username\":\"user\",\"password\":\"pass\",\"path\":\"/music\"}"})])
+        self.assertFalse(response["result"]["isError"])
+        self.assertEqual(response["result"]["content"][0]["text"], "true")
+
+    def test_music_play_rejects_http_source(self):
+        response, = self.responses(
+            [self.call(12, "self.music.play",
+                      {"source": "{\"type\":\"http\",\"audio_url\":\"https://music.example.com/song.ogg\"}"})])
+        self.assertTrue(response["result"]["isError"])
+
+    def test_music_play_all_starts_playback(self):
+        response, = self.responses(
+            [self.call(13, "self.music.play_all",
+                      {"source": "{\"type\":\"webdav\",\"base_url\":\"http://music.example.com/dav\","
+                                 "\"username\":\"user\",\"password\":\"pass\",\"path\":\"/music\"}",
+                       "random": False})])
+        self.assertFalse(response["result"]["isError"])
+
+    def test_music_count_returns_track_count(self):
+        response, = self.responses(
+            [self.call(14, "self.music.count",
+                      {"source": "{\"type\":\"webdav\",\"base_url\":\"http://music.example.com/dav\","
+                                 "\"username\":\"user\",\"password\":\"pass\",\"path\":\"/music\"}"})])
+        self.assertFalse(response["result"]["isError"])
+        self.assertEqual(response["result"]["content"][0]["text"], "0")
+
+    def test_music_play_requires_source(self):
+        response, = self.responses([self.call(15, "self.music.play", {})])
+        self.assert_error(response, 15, -32602, "Missing required argument: source")
 
     @staticmethod
     def modern(request_id, method="tools/list", params=None, capabilities=None):

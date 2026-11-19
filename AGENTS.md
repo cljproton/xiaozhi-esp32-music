@@ -68,6 +68,9 @@ python3 -m unittest discover -s scripts/tests -v
 # Format/check touched files
 clang-format -i <files>
 clang-format --dry-run -Werror <files>
+
+# Capture serial logs (use a pty so miniterm can open the console)
+script -qec "python3 -m serial.tools.miniterm <serial-port> 115200 --raw" /tmp/serial.log
 ```
 
 The build script changes local `sdkconfig` and build state. Do not assume the build directory still represents a previous target.

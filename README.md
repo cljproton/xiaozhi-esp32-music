@@ -20,6 +20,8 @@ As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabiliti
 - MQTT and BluFi cryptographic code has migrated to PSA Crypto. IDF 6 component splits and third-party dependency compatibility have also been addressed.
 - Audio pipeline concurrency, MQTT/UDP packet validation, and release-matrix selection have been hardened.
 - ESP32-P4 Rev1 and Rev3 are both supported on IDF 6 with ESP-SR 2.4.7.
+- Added a WebDAV music player: the web UI manages sources, lists tracks page by page, and controls playback and seeking. AI uses the `self.music.*` tools against the same session. Playback mode and the selected source are saved in NVS. See [WebDAV Music Player](docs/music-player.md).
+- Added a WebDAV music player: the web UI manages sources, lists tracks page by page, and controls playback and seeking. AI uses the `self.music.*` tools against the same session. Playback mode and the selected source are saved in NVS. See [WebDAV Music Player](docs/music-player.md).
 
 ### Features Implemented
 
@@ -36,6 +38,7 @@ As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabiliti
 - Device-side MCP for device control (Speaker, LED, Servo, GPIO, etc.)
 - Cloud-side MCP to extend large model capabilities (smart home control, PC desktop operation, knowledge search, email, etc.)
 - Customizable wake words, fonts, emojis, and chat backgrounds with online web-based editing ([Custom Assets Generator](https://github.com/78/xiaozhi-assets-generator))
+- Play remote music from WebDAV sources. The web player and AI tools share one playback session, with paginated track lists, search, sequential/shuffle modes, pause and resume, and progress seeking
 
 ## Hardware
 
@@ -130,6 +133,7 @@ Use the `release/v6.1` branch rather than the `v6.1` release tag: an ESP32-C3 Wi
 - [MCP Protocol Interaction Flow](docs/mcp-protocol.md) - Device-side MCP protocol implementation
 - [MQTT + UDP Hybrid Communication Protocol Document](docs/mqtt-udp.md)
 - [A detailed WebSocket communication protocol document](docs/websocket.md)
+- [WebDAV Music Player: source setup, web API, AI tools, and playback implementation](docs/music-player.md)
 
 ## Large Model Configuration
 
