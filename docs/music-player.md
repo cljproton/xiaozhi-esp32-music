@@ -41,6 +41,8 @@ Sources are stored in NVS under the `music` namespace. The `sources` key holds a
 
 `base_url` stops at `http://host:port` and must not contain `/dav`. `path` is `/dav` or one of its subdirectories. Use the credentials required by your WebDAV server.
 
+OpenList is the recommended source gateway. It mounts FTP, SFTP, SMB, object storage and other drives, then exposes them through WebDAV; the web source form shows the same hint. If FTP is mounted at `/ftp` in OpenList, set `path` to `/dav/ftp` to play from that FTP directory.
+
 Sources are added, edited, and deleted only in the web UI. The AI tool `self.music.sources` is read-only. On read, a `path` without a leading slash is corrected automatically.
 
 ## WebUI

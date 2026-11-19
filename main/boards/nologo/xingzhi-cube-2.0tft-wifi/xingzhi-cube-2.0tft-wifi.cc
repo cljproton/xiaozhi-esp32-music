@@ -120,6 +120,11 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
+            // 电台播放中按一下停台并恢复麦克风
+            if (app.IsRadioPlaying()) {
+                app.Schedule([]() { Application::GetInstance().StopRadio(); });
+                return;
+            }
             // 播放中按一下暂停（Web 端轮询状态会同步显示暂停）；
             // 已暂停时再按一下停止播放，把麦克风交还。
             if (app.GetDeviceState() == kDeviceStateNotifying) {

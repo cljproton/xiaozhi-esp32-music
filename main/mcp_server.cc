@@ -27,6 +27,11 @@
 #include "lvgl_image.h"
 #include "lvgl_theme.h"
 #include "settings.h"
+#if CONFIG_USE_RADIO
+#include "radio/radio_factory.h"
+#include "radio/radio_api_handler.h"
+#include "radio/radio_source.h"
+#endif
 
 #define TAG "MCP"
 
@@ -319,6 +324,180 @@ void McpServer::AddCommonTools() {
                 return PlayMusicTrackAt(properties["source"].value<int>(),
                                         properties["index"].value<int>());
             });
+
+#if CONFIG_USE_RADIO
+    // 网络电台：与 self.music.* 共存，由 Application 统一做播放源互斥
+    {
+        auto radio_source = Application::GetInstance().GetRadioSource();
+        if (!radio_source) {
+            radio_source = radio::CreateRadioSource();
+            Application::GetInstance().SetRadioSource(radio_source);
+        }
+        if (radio_source) {
+            radio_source->SetPcmCallback([](std::vector<int16_t>&& pcm, int sample_rate,
+                                            int channels) {
+                static uint32_t pcm_id = 0;
+                Application::GetInstance().GetAudioService().PushPcmPlaybackTask(
+                    std::move(pcm), sample_rate, static_cast<uint32_t>(channels), ++pcm_id, 0);
+            });
+            Application::GetInstance().SetRadioStopHandler([radio_source]() {
+                radio_source->Stop();
+            });
+            Application::GetInstance().SetRadioStartHandler([radio_source](const std::string& url) {
+                radio_source->SetVolume(100);
+                if (!radio_source->Start(url)) {
+                    ESP_LOGE(TAG, "Failed to start radio stream: %s", url.c_str());
+                    return;
+                }
+                Application::GetInstance().SetRadioPlaying(true);
+                Application::GetInstance().ArmRadioWatchdog(true);
+                ESP_LOGI(TAG, "Radio started: %s", url.c_str());
+            });
+            radio_source->SetStateCallback([radio_source](radio::RadioState state,
+                                                          const std::string&) {
+                auto& app = Application::GetInstance();
+                if (state == radio::RadioState::kPlaying) {
+                    app.ArmRadioWatchdog(false);
+                } else if (state == radio::RadioState::kBuffering ||
+                           state == radio::RadioState::kConnecting) {
+                    app.ArmRadioWatchdog(true);
+                } else if (state == radio::RadioState::kStopped ||
+                           state == radio::RadioState::kError) {
+                    // 可能是断流后的瞬态，自动重连由 radio source 处理；
+                    // 只有显式 StopRadio() 才结束电台会话并恢复麦克风。
+                    app.ArmRadioWatchdog(false);
+                }
+            });
+
+            AddTool("radio.play",
+                    "按名称播放已保存的网络电台（模糊匹配）。电台在设备网页端管理。",
+                    PropertyList({Property("name", kPropertyTypeString)}),
+                    [radio_source](const PropertyList& properties) -> ToolResult {
+                        std::string name = properties["name"].value<std::string>();
+                        auto matches = radio_source->GetStationManager().FindByName(name);
+                        if (matches.empty()) {
+                            std::string page = radio::RadioApiHandler::GetWebPageUrl();
+                            std::string hint = page.empty()
+                                ? "请先让设备联网，再用 radio.web_guide 获取网页地址。"
+                                : "请在浏览器打开 " + page + " 添加电台。";
+                            return std::unexpected("没有匹配的电台。" + hint);
+                        }
+                        radio_source->SetVolume(100);
+                        Application::GetInstance().StartRadio(matches.front().url);
+                        return "正在播放：" + matches.front().name;
+                    });
+
+            AddTool("radio.play_default",
+                    "播放设备已保存的第一个电台；用户只说“放电台”而没有指定台名时使用。",
+                    PropertyList(),
+                    [radio_source](const PropertyList&) -> ToolResult {
+                        auto stations = radio_source->GetStationManager().GetAllStations();
+                        if (stations.empty()) {
+                            return std::unexpected("设备上还没有保存电台，请用 radio.web_guide 查看配置网页。");
+                        }
+                        Application::GetInstance().StartRadio(stations.front().url);
+                        return "正在播放默认电台：" + stations.front().name;
+                    });
+
+            AddTool("radio.stop", "停止当前电台。", PropertyList(),
+                    [](const PropertyList&) -> ToolResult {
+                        Application::GetInstance().StopRadio();
+                        return std::string("电台已停止");
+                    });
+
+            AddTool("radio.next", "切到下一个已保存电台。", PropertyList(),
+                    [radio_source](const PropertyList&) -> ToolResult {
+                        auto station = radio_source->GetStationManager().GetNextStation();
+                        if (!station) return std::string("没有下一个电台");
+                        Application::GetInstance().StartRadio(station->url);
+                        return "正在播放：" + station->name;
+                    });
+
+            AddTool("radio.prev", "切到上一个已保存电台。", PropertyList(),
+                    [radio_source](const PropertyList&) -> ToolResult {
+                        auto station = radio_source->GetStationManager().GetPrevStation();
+                        if (!station) return std::string("没有上一个电台");
+                        Application::GetInstance().StartRadio(station->url);
+                        return "正在播放：" + station->name;
+                    });
+
+            AddTool("radio.volume", "设置电台播放音量 (0-100)。",
+                    PropertyList({Property("volume", kPropertyTypeInteger, 0, 100)}),
+                    [](const PropertyList& properties) -> ToolResult {
+                        int volume = properties["volume"].value<int>();
+                        auto codec = Board::GetInstance().GetAudioCodec();
+                        if (codec == nullptr) {
+                            return std::unexpected("无法设置设备音量");
+                        }
+                        codec->SetOutputVolume(volume);
+                        return "设备音量已设为 " + std::to_string(volume);
+                    });
+
+            AddTool("radio.web_guide",
+                    "获取电台配置网页地址，供用户搜索、添加、删除电台和调节增益。",
+                    PropertyList(),
+                    [radio_source](const PropertyList&) -> ToolResult {
+                        std::string page = radio::RadioApiHandler::GetWebPageUrl();
+                        if (page.empty()) {
+                            return std::unexpected("设备尚未联网，网页地址不可用");
+                        }
+                        int count = static_cast<int>(
+                            radio_source->GetStationManager().GetAllStations().size());
+                        return "电台配置页：" + page + "。当前已保存 " + std::to_string(count) +
+                               "/" + std::to_string(radio::StationManager::kMaxStations) + " 台。";
+                    });
+
+            AddTool("radio.stations.list",
+                    "列出设备已保存的电台（序号、名称、URL、分类、国家、增益）。",
+                    PropertyList(),
+                    [radio_source](const PropertyList&) -> ToolResult {
+                        auto stations = radio_source->GetStationManager().GetAllStations();
+                        if (stations.empty()) return std::string("设备上还没有保存电台");
+                        std::string out = "已保存电台：";
+                        int idx = 1;
+                        for (const auto& s : stations) {
+                            out += " " + std::to_string(idx++) + ". " + s.name + " - " + s.url +
+                                   " (增益 " + std::to_string(s.gain) + "%)";
+                        }
+                        return out;
+                    });
+
+            AddTool("radio.stations.get", "按名称查看某个已保存电台的详情。",
+                    PropertyList({Property("name", kPropertyTypeString)}),
+                    [radio_source](const PropertyList& properties) -> ToolResult {
+                        auto matches = radio_source->GetStationManager().FindByName(
+                            properties["name"].value<std::string>());
+                        if (matches.empty()) return std::string("没有匹配的电台");
+                        const auto& s = matches.front();
+                        return "名称：" + s.name + "\nURL：" + s.url + "\n分类：" + s.genre +
+                               "\n国家：" + s.country + "\n增益：" + std::to_string(s.gain) + "%";
+                    });
+
+            AddTool("radio.stations.delete",
+                    "按序号删除已保存电台，需要 confirm=true；先列列表并向用户确认。",
+                    PropertyList({
+                        Property("index", kPropertyTypeInteger, 1, 1, radio::StationManager::kMaxStations),
+                        Property("confirm", kPropertyTypeBoolean, false),
+                    }),
+                    [radio_source](const PropertyList& properties) -> ToolResult {
+                        int index = properties["index"].value<int>();
+                        if (!properties["confirm"].value<bool>()) {
+                            return std::string("删除电台需要 confirm=true，请先调用 radio.stations.list 并向用户确认。");
+                        }
+                        auto& mgr = radio_source->GetStationManager();
+                        auto stations = mgr.GetAllStations();
+                        if (index < 1 || index > static_cast<int>(stations.size())) {
+                            return std::string("电台序号超出范围");
+                        }
+                        const auto& target = stations[static_cast<size_t>(index) - 1];
+                        if (!mgr.RemoveStation(target.id)) {
+                            return std::unexpected("删除失败：" + target.name);
+                        }
+                        return "已删除：" + target.name;
+                    });
+        }
+    }
+#endif  // CONFIG_USE_RADIO
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), std::make_move_iterator(original_tools.begin()),

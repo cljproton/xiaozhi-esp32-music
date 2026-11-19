@@ -9,6 +9,7 @@
             "wake_word": "nihaoxiaozhi",
             "sdkconfig_append": [
                 "CONFIG_HTTPD_WS_SUPPORT=y",
+                "CONFIG_USE_RADIO=y",
                 "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/16m_radio.csv\"",
                 "CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16",
                 "CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64",

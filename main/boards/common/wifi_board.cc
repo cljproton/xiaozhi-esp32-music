@@ -10,6 +10,7 @@
 #include <freertos/task.h>
 #include <esp_network.h>
 #include <esp_log.h>
+#include <esp_wifi.h>
 #include <esp_mac.h>
 #include <utility>
 
@@ -51,6 +52,12 @@ std::string WifiBoard::GetBoardType() {
 
 void WifiBoard::StartNetwork() {
     auto& wifi_manager = WifiManager::GetInstance();
+
+    // 锁定 BSSID 会禁用同名 AP 之间的漫游；每次启动都清掉这个旧设置
+    {
+        Settings wifi_settings("wifi", true);
+        wifi_settings.EraseKey("remember_bssid");
+    }
 
     // Initialize WiFi manager
     WifiManagerConfig config;
@@ -116,7 +123,17 @@ void WifiBoard::TryWifiConnect() {
 
 void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
     switch (event) {
-        case NetworkEvent::Connected:
+        case NetworkEvent::Connected: {
+            // WifiStation 每次连接都会重写 sta 配置，连接成功后再补上 802.11k/v/r
+            // 能力标志；这些标志对不支持的 AP 无影响，只在后续漫游时生效。
+            wifi_config_t wifi_config;
+            if (esp_wifi_get_config(WIFI_IF_STA, &wifi_config) == ESP_OK) {
+                wifi_config.sta.rm_enabled = 1;   // 802.11k 邻居报告
+                wifi_config.sta.btm_enabled = 1;  // 802.11v BSS 过渡
+                wifi_config.sta.mbo_enabled = 1;  // 多频段操作
+                wifi_config.sta.ft_enabled = 1;   // 802.11r 快速切换
+                esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+            }
             // Stop timeout timer
             esp_timer_stop(connect_timer_);
 #ifdef CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING
@@ -126,6 +143,7 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
             break;
+        }
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
             break;

@@ -23,6 +23,7 @@
 
 // Forward declaration
 class PlaybackScheduler;
+namespace radio { class RadioSource; }
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -181,6 +182,19 @@ public:
     bool ResumeMusic();
     bool SeekMusic(uint32_t time_ms);
     void SetMusicMode(MusicPlayMode mode);
+
+    // Internet radio source (only compiled when CONFIG_USE_RADIO is enabled)
+    std::shared_ptr<radio::RadioSource> GetRadioSource() const { return radio_source_; }
+    void SetRadioSource(std::shared_ptr<radio::RadioSource> source) { radio_source_ = std::move(source); }
+    bool IsRadioPlaying() const { return radio_playing_; }
+    void SetRadioPlaying(bool playing);
+    void SetRadioStopHandler(std::function<void()> handler) { radio_stop_handler_ = std::move(handler); }
+    void SetRadioStartHandler(std::function<void(const std::string&)> handler) {
+        radio_start_handler_ = std::move(handler);
+    }
+    void StartRadio(const std::string& url);
+    void StopRadio();
+    void ArmRadioWatchdog(bool arm);
     // NVS 持久化的播放模式与选中音源（"music" 命名空间）
     static MusicPlayMode LoadPersistedMusicMode();
     static int LoadSelectedSource();
@@ -260,6 +274,19 @@ private:
         bool valid = false;
     };
     PlaybackSnapshot* playback_snapshot_ = nullptr;
+
+    // 网络电台：与音乐共用输出设备，切换时互斥
+    std::shared_ptr<radio::RadioSource> radio_source_;
+    std::function<void()> radio_stop_handler_;
+    std::function<void(const std::string&)> radio_start_handler_;
+    std::string pending_radio_url_;
+    bool radio_playing_ = false;
+    esp_timer_handle_t radio_watchdog_timer_ = nullptr;
+    bool radio_watchdog_armed_ = false;
+    static constexpr int kRadioBufferingTimeoutMs = 30000;
+    static void RadioWatchdogCallback(void* arg);
+    void HandleRadioWatchdogTimeout();
+    void MaybeStartPendingRadio();
 
     void ClearMusicSessionLocked();
     // 单例快照：采集当前 IO 信息 / 更新目标位置 / 按快照重启（暂停与拖拽共用）

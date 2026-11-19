@@ -1,6 +1,11 @@
 #include "ws_control_server.h"
+#include "handlers/auth_api_handler.h"
 #include "handlers/music_api_handler.h"
 #include "handlers/system_api_handler.h"
+#include "application.h"
+#if CONFIG_USE_RADIO
+#include "radio/radio_api_handler.h"
+#endif
 #include <esp_log.h>
 #include <esp_http_server.h>
 #include <cstring>
@@ -47,8 +52,13 @@ WebSocketControlServer::WebSocketControlServer(const WebUIProvider& provider)
     instance_ = this;
     
     // 注册所有 HTTP handlers
+    AuthApiHandler::RegisterHandlers(registry_);
     MusicApiHandler::RegisterHandlers(registry_);
     SystemApiHandler::RegisterHandlers(registry_);
+#if CONFIG_USE_RADIO
+    radio::RadioApiHandler::RegisterHandlers(registry_,
+                                             Application::GetInstance().GetRadioSource());
+#endif
     renderer_.RegisterRoutes(registry_);
 }
 
@@ -61,7 +71,7 @@ bool WebSocketControlServer::Start(int port) {
     config_ = HTTPD_DEFAULT_CONFIG();
     config_.server_port = port;
     config_.max_open_sockets = 7;
-    config_.max_uri_handlers = 32;
+    config_.max_uri_handlers = CONFIG_HTTPD_MAX_URI_HANDLERS;
     config_.ctrl_port = 32769;
 
     // WebSocket URI

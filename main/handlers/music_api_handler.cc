@@ -1,5 +1,6 @@
 #include "music_api_handler.h"
 #include "handler_registry.h"
+#include "web_auth.h"
 #include "mcp_server.h"
 #include "application.h"
 #include "board.h"
@@ -11,24 +12,9 @@
 #include <cstring>
 #include <string>
 
-constexpr const char* kWebUiToken = "xiaozhi";
-
 namespace {
 
 constexpr int kTracksPageSize = 20;
-
-bool IsMusicAuthorized(httpd_req_t* req) {
-    constexpr size_t kTokenSize = 128;
-    char token[kTokenSize];
-    if (httpd_req_get_hdr_value_str(req, "Authorization", token, sizeof(token)) != ESP_OK) {
-        return false;
-    }
-    std::string header(token);
-    if (header.size() < 8 || header.compare(0, 7, "Bearer ") != 0) {
-        return false;
-    }
-    return header.substr(7) == kWebUiToken;
-}
 
 esp_err_t SendJson(httpd_req_t* req, cJSON* root, const char* status = "200 OK") {
     CJsonUniquePtr owned(root);
@@ -150,7 +136,7 @@ void AddStatusFields(cJSON* root, const Application::MusicStatus& status) {
 }
 
 esp_err_t MusicStatusHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     CJsonUniquePtr root(cJSON_CreateObject());
@@ -160,7 +146,7 @@ esp_err_t MusicStatusHandler(httpd_req_t* req) {
 }
 
 esp_err_t MusicTracksHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     int source_index = ParseIntQuery(req, "source", 0);
@@ -217,7 +203,7 @@ esp_err_t MusicTracksHandler(httpd_req_t* req) {
 
 // POST /api/music/source  {"index":0,"mode":"shuffle"}
 esp_err_t MusicPlaySourceHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -274,7 +260,7 @@ esp_err_t MusicPlaySourceHandler(httpd_req_t* req) {
 
 // POST /api/music/track  {"index":3}
 esp_err_t MusicPlayTrackHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -295,7 +281,7 @@ esp_err_t MusicPlayTrackHandler(httpd_req_t* req) {
 }
 
 esp_err_t MusicNextHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     Application::GetInstance().PlayNextMusic();
@@ -305,7 +291,7 @@ esp_err_t MusicNextHandler(httpd_req_t* req) {
 }
 
 esp_err_t MusicStopHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     Application::GetInstance().StopMusicPlayback();
@@ -315,7 +301,7 @@ esp_err_t MusicStopHandler(httpd_req_t* req) {
 }
 
 esp_err_t MusicPrevHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     Application::GetInstance().PlayPrevMusic();
@@ -326,7 +312,7 @@ esp_err_t MusicPrevHandler(httpd_req_t* req) {
 
 // POST /api/music/mode  {"mode":"shuffle"}
 esp_err_t MusicModeHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -347,7 +333,7 @@ esp_err_t MusicModeHandler(httpd_req_t* req) {
 
 // POST /api/music/volume  {"volume":40}
 esp_err_t MusicVolumeHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -372,7 +358,7 @@ esp_err_t MusicVolumeHandler(httpd_req_t* req) {
 
 // POST /api/music/pause
 esp_err_t MusicPauseHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     if (!Application::GetInstance().PauseMusic()) {
@@ -385,7 +371,7 @@ esp_err_t MusicPauseHandler(httpd_req_t* req) {
 
 // POST /api/music/resume
 esp_err_t MusicResumeHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     if (!Application::GetInstance().ResumeMusic()) {
@@ -398,7 +384,7 @@ esp_err_t MusicResumeHandler(httpd_req_t* req) {
 
 // POST /api/music/seek  {"time_ms":65000}
 esp_err_t MusicSeekHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -427,7 +413,7 @@ esp_err_t MusicSeekHandler(httpd_req_t* req) {
 
 // POST /api/music/play  {"source":{...}}  单曲播放，AI 与调试用
 esp_err_t MusicPlayHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -460,7 +446,7 @@ esp_err_t MusicPlayHandler(httpd_req_t* req) {
 
 // POST /api/music/list  {"source":{...}}   WebDAV 目录原始条目
 esp_err_t MusicListHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -492,7 +478,7 @@ esp_err_t MusicListHandler(httpd_req_t* req) {
 
 // GET/POST /api/music/sources
 esp_err_t MusicSourcesHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
 
@@ -541,7 +527,7 @@ esp_err_t MusicSourcesHandler(httpd_req_t* req) {
 
 // POST /api/music/search  {"keyword":"xxx","source":0}
 esp_err_t MusicSearchHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -584,7 +570,7 @@ esp_err_t MusicSearchHandler(httpd_req_t* req) {
 
 // POST /api/music/play_track  {"source":0,"index":3}
 esp_err_t MusicPlayTrackAtHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;
@@ -631,7 +617,7 @@ esp_err_t MusicPlayTrackAtHandler(httpd_req_t* req) {
 
 // POST /api/music/selected_source  {"index":0}
 esp_err_t MusicSelectedSourceHandler(httpd_req_t* req) {
-    if (!IsMusicAuthorized(req)) {
+    if (!web_auth::IsAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
     std::string body;

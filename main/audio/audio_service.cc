@@ -900,8 +900,10 @@ void AudioService::CheckAndUpdateAudioPowerState() {
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_INPUT_STOP_REQUEST);
     }
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
-        // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
-        if (!(codec_->duplex() && codec_->input_enabled())) {
+        // 电台等外部播放源会偶尔停顿超过 15 秒（HLS 分片间隔），此时关掉输出
+        // 会在恢复时重新初始化 I2S，造成明显卡顿。外部播放期间保持输出常开。
+        if (!external_playback_active_.load() &&
+            !(codec_->duplex() && codec_->input_enabled())) {
             codec_->EnableOutput(false);
         }
     }

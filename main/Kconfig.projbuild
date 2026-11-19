@@ -1,8 +1,15 @@
 menu "Xiaozhi Assistant"
 
+config USE_RADIO
+    bool "Enable internet radio (HLS/ICY) support"
+    default n
+    help
+        Adds station management, HLS/ICY playback and the radio web page.
+        Requires the esp_hls_stream component and the 48 KB NVS partition.
+
 config HTTPD_MAX_URI_HANDLERS
     int "Max HTTPD URI handlers"
-    default 32
+    default 48
     range 16 64
     help
         Maximum number of URI handlers that can be registered with the HTTP server.

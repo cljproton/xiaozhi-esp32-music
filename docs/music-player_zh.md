@@ -43,6 +43,8 @@
 
 `base_url` 只写到 `http://主机:端口`，不要带 `/dav`；`path` 写 `/dav` 或其下的子目录。账号和密码按 WebDAV 服务器实际配置填写。
 
+推荐用 OpenList 统一管理音源。它能把 FTP、SFTP、SMB、对象存储等协议挂载为网盘，再统一通过 WebDAV 暴露给设备；网页的音源管理表单里也有同样的提示。例如 FTP 挂载到 OpenList 的 `/ftp` 后，`path` 填 `/dav/ftp`，设备即可从该 FTP 目录播放音乐。
+
 音源的增删改只在网页端进行，AI 的 `self.music.sources` 是只读的。`base_url` 与 `path` 在读取时会被规范化：`path` 缺少开头的 `/` 会自动补上。
 
 ## WebUI

@@ -1029,6 +1029,8 @@ list(APPEND SOURCES
     "handlers/handler_registry.cc"
     "handlers/music_api_handler.cc"
     "handlers/system_api_handler.cc"
+            "handlers/web_auth.cc"
+            "handlers/auth_api_handler.cc"
     "web_ui/WebUIRenderer.cc"
 )
 
@@ -1211,11 +1213,22 @@ endif()
 # The Otto camera board uses the USB Serial/JTAG host connection to detect
 # charging from a USB port. The board is ESP32-S3 only, so require the driver
 # on that target and keep other target builds unchanged.
+if(CONFIG_USE_RADIO)
+    list(APPEND SOURCES
+        "radio/station_manager.cc"
+        "radio/radio_factory.cc"
+        "radio/radio_api_handler.cc"
+    )
+    list(APPEND INCLUDE_DIRS "radio")
+    list(APPEND RADIO_EMBED_TXTFILES "radio/radio_index.html")
+endif()
+
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_driver_usb_serial_jtag)
 endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_TXTFILES ${RADIO_EMBED_TXTFILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
@@ -1243,6 +1256,7 @@ idf_component_register(SRCS ${SOURCES}
                         fatfs
                         xiaozhi-fonts
                         espressif__esp_audio_simple_player
+                        espressif__media_lib_sal
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 

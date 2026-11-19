@@ -8,6 +8,9 @@
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
 #include "playback_scheduler.h"
+#if CONFIG_USE_RADIO
+#include "radio/radio_source.h"
+#endif
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
@@ -52,10 +55,24 @@ Application::Application() : notify_player_(audio_service_),
                                                 .name = "clock_timer",
                                                 .skip_unhandled_events = true};
     esp_timer_create(&clock_timer_args, &clock_timer_handle_);
+
+    // 电台缓冲看门狗：连接/缓冲超时后自动停台并恢复麦克风
+    esp_timer_create_args_t wd_args = {
+        .callback = RadioWatchdogCallback,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "radio_watchdog",
+        .skip_unhandled_events = true};
+    esp_timer_create(&wd_args, &radio_watchdog_timer_);
 }
 
 Application::~Application() {
     notify_player_.Stop();
+    if (radio_watchdog_timer_ != nullptr) {
+        esp_timer_stop(radio_watchdog_timer_);
+        esp_timer_delete(radio_watchdog_timer_);
+        radio_watchdog_timer_ = nullptr;
+    }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
         esp_timer_delete(clock_timer_handle_);
@@ -707,6 +724,7 @@ void Application::InitializeProtocol() {
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
+                    MaybeStartPendingRadio();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -1091,7 +1109,8 @@ void Application::HandleStateChangedEvent() {
                     "neutral");  // Then set emotion (wechat mode checks child count)
             }
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            audio_service_.EnableWakeWordDetection(!radio_playing_);
+            MaybeStartPendingRadio();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -1257,6 +1276,10 @@ bool Application::StartNotification(std::string audio_url, std::vector<NotifySub
                                    const std::string& username, const std::string& password,
                                    const std::string& title, uint64_t start_byte_pos,
                                    uint32_t start_pos_ms, uint32_t start_duration_ms) {
+    // 音乐与电台共用输出设备：先停电台，避免两路 PCM 混在一起
+    if (radio_playing_) {
+        StopRadio();
+    }
     // AI 说话期间工具调用会落到 Speaking 状态，先打断再启动播放
     InterruptSpeakingForPlayback();
     if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
@@ -1644,6 +1667,91 @@ void Application::StopMusicPlayback() {
         ClearMusicSessionLocked();
     }
     StopNotification(true);
+}
+
+void Application::SetRadioPlaying(bool playing) {
+    radio_playing_ = playing;
+    audio_service_.SetExternalPlaybackActive(playing);
+    Board::GetInstance().SetPowerSaveLevel(playing ? PowerSaveLevel::PERFORMANCE
+                                                  : PowerSaveLevel::LOW_POWER);
+    // 电台播放期间关闭唤醒词，避免扬声器声音回灌；停止后恢复
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.EnableWakeWordDetection(!playing && audio_service_.IsAfeWakeWord());
+}
+
+void Application::StartRadio(const std::string& url) {
+    if (url.empty()) {
+        return;
+    }
+    if (radio_playing_) {
+        StopRadio();
+    }
+    // 与音乐互斥：先停掉音乐会话，避免两路 PCM 争抢 codec
+    if (GetMusicStatus().active) {
+        StopMusicPlayback();
+    }
+    pending_radio_url_ = url;
+    MaybeStartPendingRadio();
+}
+
+void Application::MaybeStartPendingRadio() {
+    if (pending_radio_url_.empty() || !radio_start_handler_) {
+        return;
+    }
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        return;  // 等 TTS 播完再起流
+    }
+    auto url = std::move(pending_radio_url_);
+    pending_radio_url_.clear();
+    radio_start_handler_(url);
+}
+
+void Application::StopRadio() {
+    pending_radio_url_.clear();
+    radio_playing_ = false;
+    audio_service_.SetExternalPlaybackActive(false);
+    ArmRadioWatchdog(false);
+    if (radio_stop_handler_) {
+        // 电台 Stop() 可能阻塞等待 HTTP 段读取返回，放到一次性任务里执行，
+        // 避免卡住主事件循环或 boot 按键任务。
+        auto* handler = new std::function<void()>(radio_stop_handler_);
+        if (xTaskCreate([](void* arg) {
+                auto* h = static_cast<std::function<void()>*>(arg);
+                (*h)();
+                delete h;
+                vTaskDelete(nullptr);
+            }, "radio_stop", 4096, handler, 2, nullptr) != pdPASS) {
+            (*handler)();
+            delete handler;
+        }
+    }
+}
+
+void Application::ArmRadioWatchdog(bool arm) {
+    if (radio_watchdog_timer_ == nullptr) {
+        return;
+    }
+    if (arm && !radio_watchdog_armed_) {
+        esp_timer_start_once(radio_watchdog_timer_, kRadioBufferingTimeoutMs * 1000);
+        radio_watchdog_armed_ = true;
+    } else if (!arm && radio_watchdog_armed_) {
+        esp_timer_stop(radio_watchdog_timer_);
+        radio_watchdog_armed_ = false;
+    }
+}
+
+void Application::RadioWatchdogCallback(void* arg) {
+    static_cast<Application*>(arg)->HandleRadioWatchdogTimeout();
+}
+
+void Application::HandleRadioWatchdogTimeout() {
+    radio_watchdog_armed_ = false;
+    ESP_LOGW(TAG, "Radio buffering timeout, restarting stream");
+    Schedule([this]() {
+        if (radio_source_ != nullptr && radio_playing_) {
+            radio_source_->RestartCurrent();
+        }
+    });
 }
 
 Application::MusicPlayMode Application::LoadPersistedMusicMode() {
