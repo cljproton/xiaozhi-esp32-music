@@ -258,9 +258,11 @@ esp_err_t MusicPlaySourceHandler(httpd_req_t* req) {
     }
 
     int total = static_cast<int>(tracks->size());
-    Application::GetInstance().PlayMusicPlaylist(
-        std::move(*tracks), source_index,
-        Application::GetInstance().GetMusicStatus().mode, start_index, truncated);
+    if (!Application::GetInstance().PlayMusicPlaylist(
+            std::move(*tracks), source_index,
+            Application::GetInstance().GetMusicStatus().mode, start_index, truncated)) {
+        return SendError(req, "502 Bad Gateway", "failed to start playback");
+    }
 
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "playing");
@@ -284,7 +286,9 @@ esp_err_t MusicPlayTrackHandler(httpd_req_t* req) {
     if (index_item == nullptr || !cJSON_IsNumber(index_item)) {
         return SendError(req, "400 Bad Request", "missing index");
     }
-    Application::GetInstance().PlayMusicTrackAt(index_item->valueint);
+    if (!Application::GetInstance().PlayMusicTrackAt(index_item->valueint)) {
+        return SendError(req, "400 Bad Request", "failed to play track");
+    }
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "playing");
     return SendJson(req, response.release());
@@ -371,7 +375,9 @@ esp_err_t MusicPauseHandler(httpd_req_t* req) {
     if (!IsMusicAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
-    Application::GetInstance().PauseMusic();
+    if (!Application::GetInstance().PauseMusic()) {
+        return SendError(req, "400 Bad Request", "nothing playing");
+    }
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "ok");
     return SendJson(req, response.release());
@@ -382,7 +388,9 @@ esp_err_t MusicResumeHandler(httpd_req_t* req) {
     if (!IsMusicAuthorized(req)) {
         return SendError(req, "401 Unauthorized", "unauthorized");
     }
-    Application::GetInstance().ResumeMusic();
+    if (!Application::GetInstance().ResumeMusic()) {
+        return SendError(req, "400 Bad Request", "nothing paused");
+    }
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "ok");
     return SendJson(req, response.release());
@@ -409,7 +417,9 @@ esp_err_t MusicSeekHandler(httpd_req_t* req) {
     if (time_ms < 0) {
         return SendError(req, "400 Bad Request", "invalid time_ms");
     }
-    Application::GetInstance().SeekMusic(static_cast<uint32_t>(time_ms));
+    if (!Application::GetInstance().SeekMusic(static_cast<uint32_t>(time_ms))) {
+        return SendError(req, "400 Bad Request", "seek failed");
+    }
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "ok");
     return SendJson(req, response.release());
@@ -499,10 +509,15 @@ esp_err_t MusicSourcesHandler(httpd_req_t* req) {
                 settings.SetString("sources", printed.get());
             }
         }
+        // 音源被删除后保存的序号会越界，这里归零并写回 NVS
+        int selected = Application::LoadSelectedSource();
+        if (selected < 0 || selected >= cJSON_GetArraySize(sources.get())) {
+            selected = 0;
+            settings.SetInt("selected_source", 0);
+        }
         CJsonUniquePtr response(cJSON_CreateObject());
         cJSON_AddStringToObject(response.get(), "status", "ok");
-        cJSON_AddNumberToObject(response.get(), "selected_index",
-                                Application::LoadSelectedSource());
+        cJSON_AddNumberToObject(response.get(), "selected_index", selected);
         cJSON_AddItemToObject(response.get(), "sources", sources.release());
         return SendJson(req, response.release());
     }
@@ -602,7 +617,10 @@ esp_err_t MusicPlayTrackAtHandler(httpd_req_t* req) {
         return SendError(req, "400 Bad Request", "track index out of range");
     }
     auto mode = Application::GetInstance().GetMusicStatus().mode;
-    Application::GetInstance().PlayMusicPlaylist(std::move(*tracks), source_index, mode, track_index, truncated);
+    if (!Application::GetInstance().PlayMusicPlaylist(
+            std::move(*tracks), source_index, mode, track_index, truncated)) {
+        return SendError(req, "502 Bad Gateway", "failed to start playback");
+    }
 
     CJsonUniquePtr response(cJSON_CreateObject());
     cJSON_AddStringToObject(response.get(), "status", "playing");

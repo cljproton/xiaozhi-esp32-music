@@ -11,9 +11,29 @@
 #include <charconv>
 #include <cstring>
 #include <system_error>
+#include <cJSON.h>
 #include "assets/lang_config.h"
 
 #define TAG "MQTT"
+
+namespace {
+// 只按 JSON 的 type 字段过滤保活消息，避免误伤正文中含 ping 等词的对话
+bool IsKeepAliveMessage(const std::string& text) {
+    cJSON* root = cJSON_Parse(text.c_str());
+    if (root == nullptr) {
+        return false;
+    }
+    cJSON* type = cJSON_GetObjectItem(root, "type");
+    bool keep_alive = false;
+    if (cJSON_IsString(type)) {
+        const char* value = type->valuestring;
+        keep_alive = strcmp(value, "hello") == 0 || strcmp(value, "goodbye") == 0 ||
+                     strcmp(value, "ping") == 0 || strcmp(value, "pong") == 0;
+    }
+    cJSON_Delete(root);
+    return keep_alive;
+}
+}  // namespace
 
 MqttProtocol::MqttProtocol() {
     event_group_handle_ = xEventGroupCreate();
@@ -124,10 +144,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
 
     mqtt_->OnMessage([this](const std::string& topic, const std::string& payload) {
         // Log AI conversation: incoming user message / AI response
-        if (payload.find("\"hello\"") == std::string::npos &&
-            payload.find("\"goodbye\"") == std::string::npos &&
-            payload.find("\"ping\"") == std::string::npos &&
-            payload.find("\"pong\"") == std::string::npos) {
+        if (!IsKeepAliveMessage(payload)) {
             ESP_LOGI("PROTO", "RX: %s", payload.c_str());
         }
 
@@ -211,10 +228,7 @@ bool MqttProtocol::SendText(const std::string& text) {
         return false;
     }
     // Log AI conversation: outgoing AI response / user command
-    if (text.find("\"hello\"") == std::string::npos &&
-        text.find("\"goodbye\"") == std::string::npos &&
-        text.find("\"ping\"") == std::string::npos &&
-        text.find("\"pong\"") == std::string::npos) {
+    if (!IsKeepAliveMessage(text)) {
         ESP_LOGI("PROTO", "TX: %s", text.c_str());
     }
     if (!mqtt_->Publish(publish_topic_, text)) {

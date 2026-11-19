@@ -5,6 +5,8 @@
     "builds": [
         {
             "name": "xingzhi-cube-2.0tft-wifi",
+            "language": "zh-CN",
+            "wake_word": "nihaoxiaozhi",
             "sdkconfig_append": [
                 "CONFIG_HTTPD_WS_SUPPORT=y",
                 "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/16m_radio.csv\"",

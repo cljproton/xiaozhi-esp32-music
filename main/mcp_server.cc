@@ -1524,7 +1524,7 @@ void McpServer::DoToolCall(McpRequestContext context, McpTool* tool, const cJSON
             }
             return;
         }
-        ESP_LOGI(TAG, "Tool %s success in %lu ms", tool->name().c_str(),
+        ESP_LOGD(TAG, "Tool %s success in %lu ms", tool->name().c_str(),
                  static_cast<unsigned long>(elapsed_ms));
         ReplyResult(context, *result, response_sender);
     });

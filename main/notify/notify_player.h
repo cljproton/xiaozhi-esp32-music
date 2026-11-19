@@ -4,6 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -88,8 +89,8 @@ private:
     uint32_t underrun_count_ = 0;    size_t next_subtitle_index_ = 0;
     bool active_ = false;
     bool worker_running_ = false;
-    uint32_t gmf_playback_pos_ms_ = 0;
-    uint32_t gmf_duration_ms_ = 0;
+    std::atomic<uint32_t> gmf_playback_pos_ms_{0};
+    std::atomic<uint32_t> gmf_duration_ms_{0};
     bool cancelled_ = false;
     bool http_finished_ = false;
     bool stream_started_ = false;

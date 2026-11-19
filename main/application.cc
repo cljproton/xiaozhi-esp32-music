@@ -140,14 +140,23 @@ void Application::Initialize() {
     // 初始化 PlaybackScheduler
     playback_scheduler_->Initialize(*this);
 
-    // 运行时拉高关键模块日志级别，便于串口调测 AI 对话/播放流程
-    esp_log_level_set("MCP", ESP_LOG_DEBUG);
-    esp_log_level_set("NOTIFY", ESP_LOG_WARN);      // 只看错误/警告
-    esp_log_level_set("Application", ESP_LOG_WARN); // 只看错误/警告
-    esp_log_level_set("WSControl", ESP_LOG_DEBUG);   // 修正：代码里用的是 "WSControl"
-    esp_log_level_set("PROTO", ESP_LOG_DEBUG);   // AI 对话日志
+    // 保留 AI 对话日志，压低解码与网络组件的调试输出
+    esp_log_level_set("MCP", ESP_LOG_INFO);
+    esp_log_level_set("PROTO", ESP_LOG_INFO);
+    esp_log_level_set("Application", ESP_LOG_WARN);
+    // notify_player.cc 的 TAG 是 NotifyPlayer，之前的 "NOTIFY" 设置从未生效
+    esp_log_level_set("NotifyPlayer", ESP_LOG_WARN);
+    esp_log_level_set("WSControl", ESP_LOG_WARN);
     esp_log_level_set("HTTP", ESP_LOG_WARN);
-    ESP_LOGI(TAG, "Debug log levels enabled for MCP/WSControl/PROTO; NOTIFY/Application at WARN");
+    esp_log_level_set("HttpClient", ESP_LOG_WARN);
+    esp_log_level_set("EspTcp", ESP_LOG_WARN);
+    // GMF 内部逐任务/逐缓冲区日志只在排障时打开
+    for (const char* tag : {"ESP_GMF_TASK", "ESP_GMF_HTTP", "ESP_GMF_BLOCK",
+                            "ESP_GMF_PORT", "ESP_GMF_ASMP_DEC", "ESP_GMF_EVENT",
+                            "ESP_GMF_POOL", "NEW_DATA_BUS", "AUD_SDEC_REG",
+                            "ESP_ES_PARSER", "ESP_GMF_OBJ"}) {
+        esp_log_level_set(tag, ESP_LOG_WARN);
+    }
 
     // Set network event callback for UI updates and network state handling
     board.SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
@@ -1348,7 +1357,12 @@ bool Application::StartMusic(const MusicSource& source) {
         music_active_ = true;
         music_paused_ = false;
     }
-    return StartNotification(source.audio_url, {}, source.username, source.password, source.title);
+    if (!StartNotification(source.audio_url, {}, source.username, source.password, source.title)) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+        return false;
+    }
+    return true;
 }
 
 bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_index,
@@ -1389,7 +1403,12 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
         music_cursor_ = 0;
         first = music_playlist_[music_order_[0]];
     }
-    return StartNotification(first.audio_url, {}, first.username, first.password, first.title);
+    if (!StartNotification(first.audio_url, {}, first.username, first.password, first.title)) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+        return false;
+    }
+    return true;
 }
 
 bool Application::PlayMusicTrackAt(int index) {
@@ -1410,7 +1429,12 @@ bool Application::PlayMusicTrackAt(int index) {
         source = music_playlist_[index];
     }
     StopNotification(true);
-    return StartNotification(source.audio_url, {}, source.username, source.password, source.title);
+    if (!StartNotification(source.audio_url, {}, source.username, source.password, source.title)) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        ClearMusicSessionLocked();
+        return false;
+    }
+    return true;
 }
 
 bool Application::PlayNextMusic() {
@@ -1432,7 +1456,12 @@ bool Application::PlayNextMusic() {
     }
     StopNotification(true);
     if (has_next) {
-        return StartNotification(next.audio_url, {}, next.username, next.password, next.title);
+        if (!StartNotification(next.audio_url, {}, next.username, next.password, next.title)) {
+            std::lock_guard<std::mutex> lock(music_mutex_);
+            ClearMusicSessionLocked();
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -1454,7 +1483,12 @@ bool Application::PlayPrevMusic() {
     }
     StopNotification(true);
     if (has_prev) {
-        return StartNotification(prev.audio_url, {}, prev.username, prev.password, prev.title);
+        if (!StartNotification(prev.audio_url, {}, prev.username, prev.password, prev.title)) {
+            std::lock_guard<std::mutex> lock(music_mutex_);
+            ClearMusicSessionLocked();
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -1525,10 +1559,11 @@ bool Application::RestartFromSnapshot() {
         track = music_playlist_[index];
     }
     // notifying -> idle 是合法转换，StartNotification 会重新进入 notifying
-    if (GetDeviceState() == kDeviceStateNotifying) {
+    auto previous_state = GetDeviceState();
+    if (previous_state == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
     }
-    ESP_LOGI(TAG, "Restart playback at %u ms, byte_pos=%llu, duration=%u ms",
+    ESP_LOGD(TAG, "Restart playback at %u ms, byte_pos=%llu, duration=%u ms",
              snap.position_ms, static_cast<unsigned long long>(snap.byte_pos), snap.duration_ms);
     bool ok = StartNotification(track.audio_url, {}, track.username, track.password, track.title,
                                 snap.byte_pos, snap.position_ms, snap.duration_ms);
@@ -1536,6 +1571,9 @@ bool Application::RestartFromSnapshot() {
         std::lock_guard<std::mutex> lock(music_mutex_);
         playback_snapshot_->valid = false;
         music_position_ms_ = static_cast<int>(snap.position_ms);
+    } else if (previous_state == kDeviceStateNotifying) {
+        // 启动失败时回到原状态，避免网页看到 Idle 但会话仍标记为暂停
+        SetDeviceState(kDeviceStateNotifying);
     }
     return ok;
 }

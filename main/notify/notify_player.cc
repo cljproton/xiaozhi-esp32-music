@@ -337,7 +337,8 @@ int NotifyPlayer::GmfOutCb(uint8_t* data, int data_size, void* ctx) {
                 if (bitrate_bps > 0.0) {
                     // duration_ms = size(字节) * 8 / bitrate(bps) * 1000
                     self->gmf_duration_ms_ = static_cast<uint32_t>(static_cast<double>(finfo.size) * 8.0 * 1000.0 / bitrate_bps);
-                    ESP_LOGI(TAG, "GMF duration locked: %u ms (bps=%.0f)", self->gmf_duration_ms_, bitrate_bps);
+                    ESP_LOGI(TAG, "GMF duration locked: %u ms (bps=%.0f)",
+                             self->gmf_duration_ms_.load(), bitrate_bps);
                 }
             }
         }
@@ -609,12 +610,21 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     // 否则 Range 头不会被写入 HTTP 请求，服务器返回 200 导致从开头播放。
     if (start_byte_pos > 0) {
         esp_gmf_io_handle_t pipeline_in = nullptr;
-        if (esp_gmf_pipeline_get_in(gmf_pipeline_, &pipeline_in) == ESP_GMF_ERR_OK &&
-            pipeline_in != nullptr) {
-            if (esp_gmf_io_set_pos(pipeline_in, start_byte_pos) == ESP_GMF_ERR_OK) {
-                ESP_LOGI(TAG, "Set HTTP IO start position: %llu", (unsigned long long)start_byte_pos);
-            }
+        esp_gmf_err_t in_ret = esp_gmf_pipeline_get_in(gmf_pipeline_, &pipeline_in);
+        if (in_ret != ESP_GMF_ERR_OK || pipeline_in == nullptr) {
+            ESP_LOGE(TAG, "Failed to get pipeline input IO, ret:%d", in_ret);
+            StopGmfPlayback();
+            return false;
         }
+        // 定位失败时宁可报错，也不能静默退化成从头播放
+        ret = esp_gmf_io_set_pos(pipeline_in, start_byte_pos);
+        if (ret != ESP_GMF_ERR_OK) {
+            ESP_LOGE(TAG, "Failed to set HTTP IO start position %llu, ret:%d",
+                     static_cast<unsigned long long>(start_byte_pos), ret);
+            StopGmfPlayback();
+            return false;
+        }
+        ESP_LOGI(TAG, "Set HTTP IO start position: %llu", (unsigned long long)start_byte_pos);
     }
     ret = esp_gmf_pipeline_loading_jobs(gmf_pipeline_);
     if (ret != ESP_GMF_ERR_OK) {

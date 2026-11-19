@@ -1575,6 +1575,9 @@ def build_board(
     for build in builds:
         name = _get_reported_name(build)
         final_name = _get_release_full_name(manufacturer, build)
+        # 板卡配置里可以固定语言/唤醒词；命令行参数未指定时使用板卡配置
+        build_language = language if language is not None else build.get("language")
+        build_wake_word = wake_word if wake_word is not None else build.get("wake_word")
 
         # Process sdkconfig_append
         build_sdkconfig_append = build.get("sdkconfig_append", [])
@@ -1615,14 +1618,14 @@ def build_board(
         build_option_sdkconfig: list[str] = []
         selected_build_options: Optional[dict[str, object]] = None
         selected_language, option = _language_sdkconfig_option(
-            _DEFAULT_LANGUAGE if language is None else language
+            _DEFAULT_LANGUAGE if build_language is None else build_language
         )
         user_options.append(option)
         validation_symbols.append(
             ([option.split("=", 1)[0]], "--language")
         )
         wake_word_supported = _board_supports_wake_word(target, sdkconfig_append)
-        requested_wake_word = wake_word
+        requested_wake_word = build_wake_word
         if requested_wake_word is None:
             requested_wake_word = "disabled"
             if wake_word_supported:
