@@ -548,7 +548,8 @@ private:
             restart_pending_ = false;
             ESP_LOGE(TAG, "Auto-restart gave up after %d consecutive failures", restart_count_);
             auto& app = Application::GetInstance();
-            app.Schedule([]() { Application::GetInstance().StopRadio(); });
+            // 断网期间只挂起会话、保留电台，等网络恢复重连；联网时才真正停台
+            app.Schedule([]() { Application::GetInstance().HandleRadioGiveUp(); });
             return;
         }
         if (!restart_pending_.exchange(true)) {

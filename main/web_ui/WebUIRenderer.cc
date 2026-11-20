@@ -26,6 +26,11 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     </div>
   </header>
 
+  <nav class="top-nav">
+    <a href="/" data-i18n="nav_home">首页</a>
+    <a href="/radio" data-i18n="nav_radio">电台</a>
+  </nav>
+
   <section class="card source-card">
     <div class="row">
       <select id="source"><option value="">暂无音源</option></select>
@@ -167,6 +172,10 @@ header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.5px;
            background: linear-gradient(90deg, #67e8f9, #a78bfa); -webkit-background-clip: text;
            background-clip: text; color: transparent; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
+.top-nav { display: flex; gap: 14px; margin-bottom: 14px; }
+.top-nav a { color: #94a3b8; text-decoration: none; font-size: 0.85rem; padding: 4px 8px;
+             border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.18); background: rgba(15, 23, 42, 0.5); }
+.top-nav a:hover { color: #67e8f9; border-color: rgba(34, 211, 238, 0.5); }
 .badge { font-size: 0.72rem; color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 999px;
         padding: 3px 10px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(6px); }
 .badge.on { color: #22d3ee; border-color: rgba(34, 211, 238, 0.55); box-shadow: 0 0 12px rgba(34, 211, 238, 0.25); }
@@ -254,7 +263,8 @@ const I18N = {
     play: '播放', pause: '暂停', next: '下一首', not_playing: '未在播放', unknown_track: '未知曲目',
     no_tracks: '这个音源没有音频文件', page_prev: '上一页', page_next: '下一页', volume: '音量',
     token_prompt: '请输入访问令牌', token_invalid: '令牌错误', delete_confirm: '删除当前音源？',
-    track_count: '首', truncated: '（仅显示前 500 首）'
+    track_count: '首', truncated: '（仅显示前 500 首）',
+    nav_home: '🏠 首页', nav_radio: '📻 电台'
   },
   en: {
     app_title: 'XiaoZhi Music', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
@@ -264,7 +274,8 @@ const I18N = {
     play: 'Play', pause: 'Pause', next: 'Next', not_playing: 'Not playing', unknown_track: 'Unknown track',
     no_tracks: 'No audio files in this source', page_prev: 'Prev', page_next: 'Next', volume: 'Volume',
     token_prompt: 'Enter access token', token_invalid: 'Invalid token', delete_confirm: 'Delete current source?',
-    track_count: 'track', truncated: '(first 500 shown)'
+    track_count: 'track', truncated: '(first 500 shown)',
+    nav_home: '🏠 Home', nav_radio: '📻 Radio'
   }
 };
 const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;

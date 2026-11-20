@@ -195,6 +195,8 @@ public:
     // wait_for_tts=true: AI 工具调用，等本轮 TTS 播完（或超时）再真正起流
     void StartRadio(const std::string& url, bool wait_for_tts = false);
     void StopRadio();
+    // 电台重连次数耗尽：断网期间保留会话待重连，联网时才真正停台
+    void HandleRadioGiveUp();
     void ArmRadioWatchdog(bool arm);
     // NVS 持久化的播放模式与选中音源（"music" 命名空间）
     static MusicPlayMode LoadPersistedMusicMode();
@@ -288,10 +290,20 @@ private:
     bool radio_watchdog_armed_ = false;
     static constexpr int kRadioBufferingTimeoutMs = 30000;
     static constexpr int kRadioWaitTtsTimeoutMs = 15000;  // TTS 未到时的兜底
+    static constexpr int kNetworkResumeDebounceMs = 2000;  // 重连后续播去抖
     static void RadioWatchdogCallback(void* arg);
     static void RadioPendingTimeoutCallback(void* arg);
+    static void NetworkResumeTimerCallback(void* arg);
     void HandleRadioWatchdogTimeout();
     void MaybeStartPendingRadio();
+    void HandleNetworkResumeTimeout();
+
+    // 断网挂起：记录待恢复状态，重连后延时续播
+    bool network_connected_ = true;        // 最近一次网络状态（用于区分断网导致的播放失败）
+    bool music_network_paused_ = false;    // 音乐因断网被暂停（区别于用户主动暂停）
+    bool radio_network_paused_ = false;    // 电台因断网被挂起
+    std::string radio_network_url_;        // 断网前电台 URL，重连后重建
+    esp_timer_handle_t network_resume_timer_ = nullptr;
 
     void ClearMusicSessionLocked();
     // 单例快照：采集当前 IO 信息 / 更新目标位置 / 按快照重启（暂停与拖拽共用）

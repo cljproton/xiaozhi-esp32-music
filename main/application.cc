@@ -73,6 +73,15 @@ Application::Application() : notify_player_(audio_service_),
         .name = "radio_pending",
         .skip_unhandled_events = true};
     esp_timer_create(&pending_args, &radio_pending_timer_);
+
+    // 重连续播去抖 timer：网络恢复后延时 2s 再续播，等网络稳定
+    esp_timer_create_args_t resume_args = {
+        .callback = NetworkResumeTimerCallback,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "net_resume",
+        .skip_unhandled_events = true};
+    esp_timer_create(&resume_args, &network_resume_timer_);
 }
 
 Application::~Application() {
@@ -86,6 +95,11 @@ Application::~Application() {
         esp_timer_stop(radio_pending_timer_);
         esp_timer_delete(radio_pending_timer_);
         radio_pending_timer_ = nullptr;
+    }
+    if (network_resume_timer_ != nullptr) {
+        esp_timer_stop(network_resume_timer_);
+        esp_timer_delete(network_resume_timer_);
+        network_resume_timer_ = nullptr;
     }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
@@ -380,8 +394,16 @@ void Application::Run() {
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
-    auto state = GetDeviceState();
+    network_connected_ = true;
 
+    // 断网期间有挂起的播放：延时去抖后恢复，避免刚拿到 IP 就连不上音源
+    if (music_network_paused_ || radio_network_paused_) {
+        if (network_resume_timer_ != nullptr) {
+            esp_timer_start_once(network_resume_timer_, kNetworkResumeDebounceMs * 1000);
+        }
+    }
+
+    auto state = GetDeviceState();
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
         // Network is ready, start activation
         SetDeviceState(kDeviceStateActivating);
@@ -406,10 +428,35 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
-    // Close current conversation when network disconnected
+    network_connected_ = false;
+    // 取消待执行的重连续播去抖（短时间内再次断网）
+    if (network_resume_timer_ != nullptr) {
+        esp_timer_stop(network_resume_timer_);
+    }
+
     auto state = GetDeviceState();
+    // 音乐播放中：抓快照并暂停，保留会话与进度，待重连后续播（区别于用户主动暂停）
     if (state == kDeviceStateNotifying) {
-        StopNotification();
+        bool has_music = false;
+        {
+            std::lock_guard<std::mutex> lock(music_mutex_);
+            has_music = music_active_ && !music_paused_;
+        }
+        if (has_music && PauseMusic()) {
+            music_network_paused_ = true;
+            ESP_LOGI(TAG, "Music paused on network loss, will resume on reconnect");
+        } else {
+            StopNotification();
+        }
+    }
+    // 电台播放中：标记挂起并记下 URL，保留会话直到重连（不让其因重连次数耗尽而停台）
+    if (radio_playing_ && radio_source_ != nullptr) {
+        radio_network_url_ = radio_source_->GetCurrentUrl();
+        if (!radio_network_url_.empty()) {
+            radio_network_paused_ = true;
+            ESP_LOGI(TAG, "Radio suspended on network loss, will reconnect on recovery: %s",
+                     radio_network_url_.c_str());
+        }
     }
     if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
         state == kDeviceStateSpeaking) {
@@ -1385,6 +1432,7 @@ void Application::ClearMusicSessionLocked() {
     music_fail_streak_ = 0;
     music_truncated_ = false;
     music_position_ms_ = 0;
+    music_network_paused_ = false;
     if (playback_snapshot_ != nullptr) {
         playback_snapshot_->valid = false;
     }
@@ -1766,6 +1814,8 @@ void Application::RadioPendingTimeoutCallback(void* arg) {
 void Application::StopRadio() {
     pending_radio_url_.clear();
     pending_radio_wait_tts_ = false;
+    radio_network_paused_ = false;
+    radio_network_url_.clear();
     if (radio_pending_timer_ != nullptr) {
         esp_timer_stop(radio_pending_timer_);
     }
@@ -1813,6 +1863,45 @@ void Application::HandleRadioWatchdogTimeout() {
             radio_source_->RestartCurrent();
         }
     });
+}
+
+void Application::NetworkResumeTimerCallback(void* arg) {
+    static_cast<Application*>(arg)->HandleNetworkResumeTimeout();
+}
+
+void Application::HandleNetworkResumeTimeout() {
+    // esp_timer 在 timer 任务上下文，投递回主任务处理播放状态
+    Schedule([this]() {
+        if (!network_connected_) {
+            return;  // 去抖期间又断网了，放弃本次恢复
+        }
+        if (music_network_paused_) {
+            music_network_paused_ = false;
+            ESP_LOGI(TAG, "Network recovered, resuming music");
+            if (!ResumeMusic()) {
+                ESP_LOGW(TAG, "Failed to resume music after network recovery");
+            }
+        }
+        if (radio_network_paused_) {
+            radio_network_paused_ = false;
+            std::string url = radio_network_url_;
+            radio_network_url_.clear();
+            if (!url.empty() && radio_playing_ && radio_source_ != nullptr) {
+                ESP_LOGI(TAG, "Network recovered, reconnecting radio: %s", url.c_str());
+                radio_source_->RestartCurrent();
+            }
+        }
+    });
+}
+
+void Application::HandleRadioGiveUp() {
+    // 断网挂起期间重连次数耗尽：保留电台会话，等网络恢复再重建，不真正停台
+    if (radio_network_paused_) {
+        ESP_LOGW(TAG, "Radio restarts exhausted while offline, keeping session for reconnect");
+        return;
+    }
+    ESP_LOGW(TAG, "Radio restarts exhausted, stopping");
+    StopRadio();
 }
 
 Application::MusicPlayMode Application::LoadPersistedMusicMode() {
@@ -1898,6 +1987,17 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
     }
     ESP_LOGI(TAG, "Notification playback %lu %s", static_cast<unsigned long>(playback_id),
              success ? "completed" : "failed");
+    // 断网导致的失败：抓快照并挂起会话，待重连续播，不跳歌/停播。
+    // 正常断网会先走 HandleNetworkDisconnectedEvent 暂停；这里是竞态兜底
+    // （GMF 解码错误先于 WiFi 断网事件到达主任务）。
+    if (!success && !network_connected_) {
+        if (CapturePlaybackSnapshot()) {
+            PauseMusic();
+            music_network_paused_ = true;
+            ESP_LOGI(TAG, "Playback failed while offline, holding for reconnect");
+            return;
+        }
+    }
     StopNotification();
 
     MusicSource next;
