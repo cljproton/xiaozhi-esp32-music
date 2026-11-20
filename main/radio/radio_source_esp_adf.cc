@@ -36,15 +36,16 @@ namespace radio {
 // 4 s of mono 16-bit @24 kHz, pre-rolled before the first I2S write so the
 // stream starts with a full HLS ring buffer behind it.
 constexpr size_t kPrebufferSamples = 24000 * 4;
+// 自动重连时缩短预滚，避免每次断流都要多等 4s 才出声。
+constexpr size_t kRestartPrebufferSamples = 24000 * 12 / 10;
 
 // 连续失败上限：仍能覆盖长时间网络抖动（退避封顶 16s，约 2 分钟），
 // 但不会让无效 URL 无限重连、麦克风一直静音。
 constexpr int kMaxConsecutiveRestarts = 10;
 
-// 每次 HTTP 连接建立时把 vendor http io 硬编码的 30s 读超时收窄到 10s。
-// 否则 Stop() 必须等 io 任务阻塞中的读返回（实测最长 23s，其间音频与
-// 自动重连循环都在继续）。流中断 10s 本身就该触发重连，2MB 缓冲兜底。
-constexpr int kHttpReadTimeoutMs = 10 * 1000;
+// 海外台链路抖动时 10s 读超时会被误判为断流并触发整机重建（实测静音 18s），
+// 保持 vendor 默认的 30s 读超时，配合 1MB 环形缓冲吸收抖动。
+constexpr int kHttpReadTimeoutMs = 30 * 1000;
 
 class RadioSourceHLS : public RadioSource {
 public:
@@ -81,7 +82,8 @@ public:
         }
     }
 
-    bool Start(const std::string& url) override {
+    bool Start(const std::string& url) override { return StartInternal(url, false); }
+    bool StartInternal(const std::string& url, bool quick_preroll) {
         ESP_LOGI(TAG, "Start: %s", url.c_str());
         // Stop() can arrive from the button task while the MCP task starts a
         // station; the player handle is not safe to touch concurrently.
@@ -114,6 +116,7 @@ public:
         state_ = RadioState::kConnecting;
         preroll_.clear();
         preroll_done_ = false;
+        quick_preroll_ = quick_preroll;  // 用户开台走完整预滚，自动重连走短预滚
         mute_ = false;
         {
             std::lock_guard<std::mutex> lock(url_mutex_);
@@ -147,7 +150,8 @@ public:
             }
             if (!self->preroll_done_) {
                 self->preroll_.insert(self->preroll_.end(), samples, samples + count);
-                if (self->preroll_.size() < kPrebufferSamples) {
+                size_t target = self->quick_preroll_ ? kRestartPrebufferSamples : kPrebufferSamples;
+                if (self->preroll_.size() < target) {
                     // Not touching I2S lets the decoder drain the HLS ring
                     // buffer into the preroll at full speed.
                     return data_size;
@@ -188,8 +192,11 @@ public:
             http_cfg.dir = ESP_GMF_IO_DIR_READER;
             http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
             http_cfg.user_data = this;
+            // 默认环只有 20KB，64kbps 直连流仅能扛 2.5s 抖动；扩到 1MB
+            // （HLS 的 playlist/分片请求也走此 IO，另有独立的 2MB HLS 环）。
+            http_cfg.io_cfg.buffer_cfg.buffer_size = 1 * 1024 * 1024;
             // 每次建立连接（含服务器断开后的静默重连）都会回调 PRE_REQUEST。
-            // 直连流重连后 AAC 解码器会失步（变声），靠这个事件触发管道重建。
+            // 直连流重连后靠这个事件触发解码器重置（见 RestartInPlace），不拆管线。
             http_cfg.event_handle = [](http_stream_event_msg_t* msg) -> int {
                 auto* self = static_cast<RadioSourceHLS*>(msg->user_data);
                 // vendor 的 esp_gmf_io_http 把读超时硬编码为 30s 且无配置入口，
@@ -221,10 +228,13 @@ public:
                     if (url.find(".m3u8") != std::string::npos) {
                         return ESP_GMF_ERR_OK;
                     }
+                    // 直连流断流：GMF HTTP IO 在同一 IO 句柄上自行重连；此时只重置解码器
+                    // 元素，不拆 player/pipeline（对齐 RadioDroid IcyDataSource 层重试），
+                    // 解码器在新连接数据到达后重新打开，避免重建管线导致解码上下文丢失。
                     if (!self->expect_first_request_.exchange(false) &&
                         !self->restart_pending_.exchange(true)) {
-                    self->http_start_time_ = esp_timer_get_time() / 1000;
-                        ESP_LOGW(TAG, "HTTP reconnect detected, scheduling player restart");
+                        self->http_start_time_ = esp_timer_get_time() / 1000;
+                        ESP_LOGW(TAG, "HTTP reconnect detected, resetting audio decoder only");
                         auto& app = Application::GetInstance();
                         app.Schedule([self]() {
                             std::string url;
@@ -233,7 +243,7 @@ public:
                                 url = self->last_url_;
                             }
                             if (!url.empty() && self->state_ == RadioState::kPlaying) {
-                                self->Restart(url);
+                                self->RestartInPlace(url);
                             }
                             self->restart_pending_ = false;
                         });
@@ -283,7 +293,7 @@ public:
 
         ESP_LOGI(TAG, "Buffer %u KB, preroll %u ms, internal free %u KB, PSRAM free %u KB",
                  (unsigned)(hls_cfg.io_cfg.buffer_cfg.buffer_size / 1024),
-                 (unsigned)(kPrebufferSamples * 1000 / 24000),
+                 (unsigned)((quick_preroll_ ? kRestartPrebufferSamples : kPrebufferSamples) * 1000 / 24000),
                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
@@ -552,7 +562,9 @@ private:
             app.Schedule([]() { Application::GetInstance().HandleRadioGiveUp(); });
             return;
         }
-        if (!restart_pending_.exchange(true)) {
+        // 去重：HTTP 重连回调若已排队自己的重启（已置位）就跳过；干净 EOF
+        // 没有 HTTP 回调置位，必须继续往下排，否则播完 30s 就静默停住。
+        if (restart_pending_.exchange(true)) {
             return;
         }
         restart_count_++;
@@ -617,11 +629,47 @@ private:
         if (!restart.empty() && !self->stop_requested_ && !self->shutting_down_ &&
             self->state_ != RadioState::kPlaying) {
             ESP_LOGI(TAG, "Teardown done, restarting %s", restart.c_str());
-            self->Start(restart);
+            self->StartInternal(restart, true);
         }
         // 最后清除：析构函数据此等待全部收尾（含可能的自动重启）完成
         self->teardown_active_ = false;
         vTaskDelete(nullptr);
+    }
+
+    // 断流恢复（IO 层已自动重连成功）：只重置解码器元素，不拆 pipeline/player。
+    // 解码器通过 need_reopen 在下一次 process 时以新连接数据重新打开，IO 环、
+    // rate/ch cvt、输出回调等上游全部保留，AAC 同步状态不会丢失。
+    void RestartInPlace(const std::string& url) {
+        if (stop_requested_ || teardown_active_.load() || !player_) {
+            return;
+        }
+        esp_gmf_pipeline_handle_t pipe = nullptr;
+        if (esp_audio_simple_player_get_pipeline(player_, &pipe) != ESP_GMF_ERR_OK || pipe == nullptr) {
+            ESP_LOGW(TAG, "RestartInPlace: pipeline unavailable");
+            Restart(url);
+            return;
+        }
+        esp_gmf_element_handle_t head = nullptr;
+        if (esp_gmf_pipeline_get_head_el(pipe, &head) != ESP_GMF_ERR_OK || head == nullptr) {
+            ESP_LOGW(TAG, "RestartInPlace: head element unavailable");
+            Restart(url);
+            return;
+        }
+        // 用解码器当前配置原样重配置：只置 need_reopen，下次 process 时以新连接数据
+        // 重新打开解码器。不按 URL 猜格式，编码类型与子配置都保持原值，不会变声。
+        esp_audio_simple_dec_cfg_t* cur_cfg =
+            static_cast<esp_audio_simple_dec_cfg_t*>(OBJ_GET_CFG(head));
+        if (cur_cfg == nullptr || cur_cfg->dec_type == ESP_AUDIO_SIMPLE_DEC_TYPE_NONE) {
+            ESP_LOGW(TAG, "RestartInPlace: decoder config unavailable");
+            Restart(url);
+            return;
+        }
+        if (esp_gmf_audio_dec_reconfig(head, cur_cfg) == ESP_GMF_ERR_OK) {
+            ESP_LOGI(TAG, "RestartInPlace: decoder reset scheduled (type=%d)", (int)cur_cfg->dec_type);
+            return;
+        }
+        ESP_LOGW(TAG, "RestartInPlace: decoder reset failed");
+        Restart(url);
     }
 
     // 断线恢复专用：静音并异步拆除当前管道，拆完后由 TeardownEntry 重启 url。
@@ -707,6 +755,7 @@ private:
     std::mutex lifecycle_mutex_;
     std::vector<int16_t> preroll_;
     bool preroll_done_ = false;
+    std::atomic<bool> quick_preroll_{false};
     PcmCallback pcm_callback_;
     MetadataCallback metadata_callback_;
     StateCallback state_callback_;
