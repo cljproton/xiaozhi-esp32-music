@@ -248,7 +248,7 @@ let lang = localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'zh';
 const I18N = {
   zh: {
     app_title: '小智音乐', status_idle: '待机', status_playing: '播放中', no_source: '暂无音源',
-    loading: '正在加载…', source_mgmt: '管理音源', source_hint: '推荐用 OpenList 统一管理音源：它支持 FTP、SFTP、SMB、WebDAV、对象存储等多种网盘，并统一通过 WebDAV 提供给设备。基础地址填 OpenList 的 http 地址，目录路径填 /dav/<挂载目录>，例如 /dav/ftp/music。', source_refresh: '刷新', source_edit: '编辑',
+    loading: '正在加载…', source_mgmt: '管理音源', source_hint: '推荐用 OpenList 统一管理音源：它支持 FTP、SFTP、SMB、WebDAV、对象存储等多种网盘，并统一通过 WebDAV 提供给设备。基础地址填 OpenList 的 http 地址，目录路径填 /dav/<挂载目录>，例如 /dav/ftp/music。目录路径可直接填中文，系统自动编码。', source_refresh: '刷新', source_edit: '编辑',
     source_add: '添加', source_save: '保存', source_cancel: '取消编辑', source_del: '删除当前音源',
     source_none: '暂无音源', shuffle: '随机播放', play_all: '播放全部', prev: '上一首', stop: '停止',
     play: '播放', pause: '暂停', next: '下一首', not_playing: '未在播放', unknown_track: '未知曲目',
@@ -258,7 +258,7 @@ const I18N = {
   },
   en: {
     app_title: 'XiaoZhi Music', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
-    loading: 'Loading…', source_mgmt: 'Manage Sources', source_hint: 'Use OpenList to manage sources: it supports FTP, SFTP, SMB, WebDAV, object storage and other drives, and exposes them all through WebDAV. Set Base URL to the OpenList http address and Path to /dav/<mount path>, for example /dav/ftp/music.', source_refresh: 'Refresh', source_edit: 'Edit',
+    loading: 'Loading…', source_mgmt: 'Manage Sources', source_hint: 'Use OpenList to manage sources: it supports FTP, SFTP, SMB, WebDAV, object storage and other drives, and exposes them all through WebDAV. Set Base URL to the OpenList http address and Path to /dav/<mount path>, for example /dav/ftp/music. Path supports Chinese characters directly; auto-encoded.', source_refresh: 'Refresh', source_edit: 'Edit',
     source_add: 'Add', source_save: 'Save', source_cancel: 'Cancel edit', source_del: 'Delete this source',
     source_none: 'No source', shuffle: 'Shuffle', play_all: 'Play all', prev: 'Previous', stop: 'Stop',
     play: 'Play', pause: 'Pause', next: 'Next', not_playing: 'Not playing', unknown_track: 'Unknown track',

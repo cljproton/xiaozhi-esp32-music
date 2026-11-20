@@ -743,14 +743,36 @@ bool IsAbsoluteUrl(const std::string& url) {
     return url.starts_with("http://") || url.starts_with("https://");
 }
 
-// path 视为服务器根路径：保证以单个 '/' 开头
+// path 视为服务器根路径：保证以单个 '/' 开头，并把非 ASCII、空格等字符百分号编码。
+// 已有的 %XX 原样保留，避免对编码过的 WebDAV href 二次编码。
 std::string NormalizePath(const std::string& path) {
+    auto is_hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    auto hex_digit = [](unsigned char c) -> char {
+        return c < 10 ? static_cast<char>('0' + c) : static_cast<char>('A' + (c - 10));
+    };
     std::string out;
-    for (char c : path) {
-        if (c == '/' && !out.empty() && out.back() == '/') {
-            continue;
+    for (size_t i = 0; i < path.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(path[i]);
+        if (c == '/') {
+            if (!out.empty() && out.back() == '/') {
+                continue;
+            }
+            out.push_back(c);
+        } else if (c == '%' && i + 2 < path.size() && is_hex(path[i + 1]) && is_hex(path[i + 2])) {
+            out.push_back(c);
+            out.push_back(path[++i]);
+            out.push_back(path[++i]);
+        } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+                   c == '~' || c == ':' || c == '@') {
+            out.push_back(c);
+        } else {
+            out.push_back('%');
+            out.push_back(hex_digit(c >> 4));
+            out.push_back(hex_digit(c & 0x0f));
         }
-        out.push_back(c);
     }
     if (out.empty()) {
         return "/";
