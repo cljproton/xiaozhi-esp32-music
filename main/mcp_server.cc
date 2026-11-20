@@ -953,25 +953,23 @@ std::expected<std::string, std::string> McpServer::ListWebdav(const std::string&
     std::string username = username_item->valuestring;
     std::string password = password_item->valuestring;
 
-    // 重启后 socket/WiFi 可能尚未稳定，连接失败时重试一次（200ms 退避）
+    // 单次 PROPFIND：depth="infinity" 一次取回所有层级（含子目录），
+    // 失败时由调用方回退到 "1" 保证兼容性（部分服务器不支持 infinity）。
     std::string body;
     std::string last_error;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        if (attempt > 0) {
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
+    auto propfind = [&](const char* depth) -> bool {
         auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
         if (!http) {
             last_error = "Failed to create HTTP client";
-            continue;
+            return false;
         }
-        http->SetTimeout(5000);
+        http->SetTimeout(15000);  // infinity 大目录响应较慢，放宽超时
         if (!username.empty() && !password.empty()) {
             http->SetHeader("Authorization", BasicAuthHeaderValue(username, password));
         }
         http->SetHeader("Accept", "application/xml");
         http->SetHeader("Content-Type", "application/xml");
-        http->SetHeader("Depth", "1");
+        http->SetHeader("Depth", depth);
         // PROPFIND requires an XML request body describing the query.
         http->SetContent(std::string("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                                      "<D:propfind xmlns:D=\"DAV:\">"
@@ -980,25 +978,37 @@ std::expected<std::string, std::string> McpServer::ListWebdav(const std::string&
         if (auto opened = http->Open("PROPFIND", url); !opened) {
             last_error = "Failed to open URL: " + url + " (" + opened.error().ToString() + ")";
             http->Close();
-            continue;
+            return false;
         }
         auto status = http->GetStatusCode();
         if (!status) {
             last_error = status.error().ToString();
             http->Close();
-            continue;
+            return false;
         }
         if (*status < 200 || *status >= 300) {
             last_error = "WebDAV PROPFIND failed with status " + std::to_string(*status);
             http->Close();
-            continue;
+            return false;
         }
         body = http->ReadAll();
         http->Close();
         last_error.clear();
-        break;
+        return true;
+    };
+
+    // 先试 infinity（含子目录）；失败则重试一次，仍失败则回退到单层 depth 1
+    bool ok = false;
+    for (int attempt = 0; attempt < 2 && !ok; ++attempt) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        ok = propfind("infinity");
     }
-    if (!last_error.empty()) {
+    if (!ok) {
+        ok = propfind("1");  // 兼容不支持 infinity 的服务器：退回旧行为
+    }
+    if (!ok) {
         return std::unexpected(last_error);
     }
 
