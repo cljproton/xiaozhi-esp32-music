@@ -291,19 +291,26 @@ private:
     static constexpr int kRadioBufferingTimeoutMs = 30000;
     static constexpr int kRadioWaitTtsTimeoutMs = 15000;  // TTS 未到时的兜底
     static constexpr int kNetworkResumeDebounceMs = 2000;  // 重连后续播去抖
+    static constexpr int kMaxMusicResumeRetries = 5;         // 播放中断后从断点续播的最大重试次数
     static void RadioWatchdogCallback(void* arg);
     static void RadioPendingTimeoutCallback(void* arg);
     static void NetworkResumeTimerCallback(void* arg);
+    static void MusicRetryTimerCallback(void* arg);
     void HandleRadioWatchdogTimeout();
     void MaybeStartPendingRadio();
     void HandleNetworkResumeTimeout();
+    void HandleMusicRetryTimeout();
+    // 播放异常中断：抓快照并从 byte_pos 续播当前曲目（返回 true 表示已安排重试）
+    bool TryResumeFromPlaybackError();
 
     // 断网挂起：记录待恢复状态，重连后延时续播
-    bool network_connected_ = true;        // 最近一次网络状态（用于区分断网导致的播放失败）
+    bool network_connected_ = true;        // 最近一次网络状态（仅 UI 参考，不用于播放失败判定）
     bool music_network_paused_ = false;    // 音乐因断网被暂停（区别于用户主动暂停）
     bool radio_network_paused_ = false;    // 电台因断网被挂起
     std::string radio_network_url_;        // 断网前电台 URL，重连后重建
     esp_timer_handle_t network_resume_timer_ = nullptr;
+    int music_resume_retries_ = 0;         // 当前曲目从断点续播的连续失败次数
+    esp_timer_handle_t music_retry_timer_ = nullptr;  // 续播重试退避 timer
 
     void ClearMusicSessionLocked();
     // 单例快照：采集当前 IO 信息 / 更新目标位置 / 按快照重启（暂停与拖拽共用）

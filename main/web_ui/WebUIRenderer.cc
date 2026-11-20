@@ -20,16 +20,13 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
 <div class="app">
   <header>
     <h1 id="app-title" data-i18n="app_title">小智音乐</h1>
-    <div class="header-actions">
-      <button id="btn-lang" class="lang-btn" type="button">EN</button>
+    <nav class="top-nav">
+      <a href="/" data-i18n="nav_home">首页</a>
+      <a href="/radio" data-i18n="nav_radio">电台</a>
       <span class="badge" id="badge">待机</span>
-    </div>
+      <button id="btn-lang" class="lang-btn" type="button">EN</button>
+    </nav>
   </header>
-
-  <nav class="top-nav">
-    <a href="/" data-i18n="nav_home">首页</a>
-    <a href="/radio" data-i18n="nav_radio">电台</a>
-  </nav>
 
   <section class="card source-card">
     <div class="row">
@@ -172,10 +169,9 @@ header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.5px;
            background: linear-gradient(90deg, #67e8f9, #a78bfa); -webkit-background-clip: text;
            background-clip: text; color: transparent; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
-.top-nav { display: flex; gap: 14px; margin-bottom: 14px; }
-.top-nav a { color: #94a3b8; text-decoration: none; font-size: 0.85rem; padding: 4px 8px;
-             border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.18); background: rgba(15, 23, 42, 0.5); }
-.top-nav a:hover { color: #67e8f9; border-color: rgba(34, 211, 238, 0.5); }
+.top-nav { display: flex; align-items: center; gap: 10px; }
+.top-nav a { color: #94a3b8; text-decoration: none; font-size: 0.85rem; }
+.top-nav a:hover { color: #67e8f9; }
 .badge { font-size: 0.72rem; color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 999px;
         padding: 3px 10px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(6px); }
 .badge.on { color: #22d3ee; border-color: rgba(34, 211, 238, 0.55); box-shadow: 0 0 12px rgba(34, 211, 238, 0.25); }

@@ -331,7 +331,11 @@ int NotifyPlayer::GmfOutCb(uint8_t* data, int data_size, void* ctx) {
             io_ret = esp_gmf_pipeline_get_in(self->gmf_pipeline_, &in_io);
         }
         esp_gmf_info_file_t finfo = {};
-        if (io_ret == ESP_GMF_ERR_OK && esp_gmf_io_get_info(in_io, &finfo) == ESP_GMF_ERR_OK && finfo.size > 0) {
+        if (io_ret == ESP_GMF_ERR_OK && esp_gmf_io_get_info(in_io, &finfo) == ESP_GMF_ERR_OK) {
+            // 持续记录真实 IO 字节位置：播放中断回调里 active_ 已清，靠它做断点续播
+            self->gmf_byte_pos_.store(finfo.pos);
+        }
+        if (io_ret == ESP_GMF_ERR_OK && finfo.size > 0) {
             double elapsed_sec = static_cast<double>(self->gmf_playback_pos_ms_) / 1000.0;
             if (elapsed_sec > 3.0 && self->gmf_duration_ms_ == 0) {  // 等待 3s 且未锁定时才计算
                 double bitrate_bps = (static_cast<double>(finfo.pos) * 8.0) / elapsed_sec;
@@ -686,6 +690,10 @@ bool NotifyPlayer::WaitForGmfFinish(uint32_t session_playback_id) {
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+}
+
+uint64_t NotifyPlayer::GetLastBytePos() const {
+    return gmf_byte_pos_.load();
 }
 
 bool NotifyPlayer::GetPlaybackInfo(PlaybackInfo& info) const {

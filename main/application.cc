@@ -82,6 +82,15 @@ Application::Application() : notify_player_(audio_service_),
         .name = "net_resume",
         .skip_unhandled_events = true};
     esp_timer_create(&resume_args, &network_resume_timer_);
+
+    // 音乐播放中断续播重试 timer（指数退避）
+    esp_timer_create_args_t retry_args = {
+        .callback = MusicRetryTimerCallback,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "music_retry",
+        .skip_unhandled_events = true};
+    esp_timer_create(&retry_args, &music_retry_timer_);
 }
 
 Application::~Application() {
@@ -100,6 +109,11 @@ Application::~Application() {
         esp_timer_stop(network_resume_timer_);
         esp_timer_delete(network_resume_timer_);
         network_resume_timer_ = nullptr;
+    }
+    if (music_retry_timer_ != nullptr) {
+        esp_timer_stop(music_retry_timer_);
+        esp_timer_delete(music_retry_timer_);
+        music_retry_timer_ = nullptr;
     }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
@@ -1433,6 +1447,7 @@ void Application::ClearMusicSessionLocked() {
     music_truncated_ = false;
     music_position_ms_ = 0;
     music_network_paused_ = false;
+    music_resume_retries_ = 0;
     if (playback_snapshot_ != nullptr) {
         playback_snapshot_->valid = false;
     }
@@ -1587,27 +1602,45 @@ bool Application::PlayPrevMusic() {
 
 bool Application::CapturePlaybackSnapshot() {
     NotifyPlayer::PlaybackInfo info;
-    if (!notify_player_.GetPlaybackInfo(info)) {
-        return false;
-    }
+    bool have_info = notify_player_.GetPlaybackInfo(info);
     std::lock_guard<std::mutex> lock(music_mutex_);
     if (!music_active_ || playback_snapshot_ == nullptr) {
         return false;
     }
-    auto& s = *playback_snapshot_;
-    uint32_t duration = info.duration_ms;
-    if (duration == 0 && info.byte_pos > 0 && info.position_ms > 0 &&
-        info.file_size > info.byte_pos) {
-        duration = static_cast<uint32_t>(static_cast<double>(info.file_size) * info.position_ms /
-                                         info.byte_pos);
+    // 播放中断回调里 active_ 已清，GetPlaybackInfo 会失败；此时用 NotifyPlayer
+    // 持续记录的原子值兜底，只要有真实 IO 字节位置就能断点续播。
+    uint64_t byte_pos;
+    uint64_t file_size;
+    uint32_t position_ms;
+    uint32_t duration;
+    uint32_t playback_id;
+    if (have_info) {
+        byte_pos = info.byte_pos;
+        file_size = info.file_size;
+        position_ms = info.position_ms;
+        duration = info.duration_ms;
+        playback_id = info.playback_id;
+    } else {
+        byte_pos = notify_player_.GetLastBytePos();
+        file_size = notify_player_.GetLastFileSize();
+        position_ms = notify_player_.GetLastPositionMs();
+        duration = notify_player_.GetLastDurationMs();
+        playback_id = notification_playback_id_;
+        if (byte_pos == 0) {
+            return false;  // 从未读到音频数据，无法断点续播
+        }
     }
-    s.token = info.playback_id;
+    auto& s = *playback_snapshot_;
+    if (duration == 0 && byte_pos > 0 && position_ms > 0 && file_size > byte_pos) {
+        duration = static_cast<uint32_t>(static_cast<double>(file_size) * position_ms / byte_pos);
+    }
+    s.token = playback_id;
     s.source_index = music_source_index_;
     s.cursor = static_cast<int>(music_cursor_);
-    s.position_ms = info.position_ms;
+    s.position_ms = position_ms;
     s.duration_ms = duration;
-    s.byte_pos = info.byte_pos;   // 暂停瞬间的真实 IO 位置
-    s.file_size = info.file_size;
+    s.byte_pos = byte_pos;      // 暂停/中断瞬间的真实 IO 位置
+    s.file_size = file_size;
     s.mode = static_cast<uint8_t>(music_mode_);
     s.valid = true;
     ESP_LOGD(TAG, "Capture snapshot: pos=%u dur=%u byte=%llu size=%llu",
@@ -1731,6 +1764,9 @@ bool Application::SeekMusic(uint32_t time_ms) {
 }
 
 void Application::StopMusicPlayback() {
+    if (music_retry_timer_ != nullptr) {
+        esp_timer_stop(music_retry_timer_);
+    }
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         ClearMusicSessionLocked();
@@ -1894,6 +1930,74 @@ void Application::HandleNetworkResumeTimeout() {
     });
 }
 
+bool Application::TryResumeFromPlaybackError() {
+    // 播放中断时先从 byte_pos 续播当前曲目；用户主动暂停交给原逻辑
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (!music_active_ || music_paused_) {
+            return false;
+        }
+        if (music_resume_retries_ >= kMaxMusicResumeRetries) {
+            ESP_LOGW(TAG, "Music resume retries exhausted (%d), giving up this track",
+                     music_resume_retries_);
+            return false;
+        }
+    }
+    // 抓快照（此刻 GMF pipeline 尚未销毁，可读到 byte_pos/position/duration）
+    if (!CapturePlaybackSnapshot()) {
+        return false;
+    }
+    // 只停底层流，保留音乐会话与快照，不销毁 Notifying 状态
+    notify_player_.Stop();
+    audio_service_.ResetDecoder();
+    music_resume_retries_++;
+    int backoff = 1 << (music_resume_retries_ - 1);  // 1,2,4,8,16 s
+    if (backoff > 16) backoff = 16;
+    ESP_LOGW(TAG, "Playback interrupted, resume from byte pos in %ds (attempt %d/%d)",
+             backoff, music_resume_retries_, kMaxMusicResumeRetries);
+    if (music_retry_timer_ != nullptr) {
+        esp_timer_start_once(music_retry_timer_, backoff * 1000 * 1000);
+    }
+    return true;
+}
+
+void Application::MusicRetryTimerCallback(void* arg) {
+    static_cast<Application*>(arg)->HandleMusicRetryTimeout();
+}
+
+void Application::HandleMusicRetryTimeout() {
+    Schedule([this]() {
+        // 停流期间若用户主动暂停/停止/切歌，或已恢复联网，交回相应流程
+        {
+            std::lock_guard<std::mutex> lock(music_mutex_);
+            if (!music_active_ || music_paused_) {
+                return;
+            }
+        }
+        ESP_LOGI(TAG, "Retrying playback from snapshot (attempt %d)", music_resume_retries_);
+        if (RestartFromSnapshot()) {
+            // 续播成功：从新的播放 ID 起，重试计数在下次正常完成时清零
+            ESP_LOGI(TAG, "Resumed playback from byte pos successfully");
+        } else {
+            ESP_LOGW(TAG, "Resume attempt failed, will retry if budget remains");
+            // 启动失败不会走完成回调（没有新 playback），这里自行决定是否再试
+            if (music_resume_retries_ < kMaxMusicResumeRetries) {
+                music_resume_retries_++;
+                int backoff = 1 << (music_resume_retries_ - 1);
+                if (backoff > 16) backoff = 16;
+                if (music_retry_timer_ != nullptr) {
+                    esp_timer_start_once(music_retry_timer_, backoff * 1000 * 1000);
+                }
+            } else {
+                // 重试彻底失败：清理会话停止播放
+                ESP_LOGE(TAG, "Music resume failed after %d attempts, stopping",
+                         music_resume_retries_);
+                StopMusicPlayback();
+            }
+        }
+    });
+}
+
 void Application::HandleRadioGiveUp() {
     // 断网挂起期间重连次数耗尽：保留电台会话，等网络恢复再重建，不真正停台
     if (radio_network_paused_) {
@@ -1987,16 +2091,11 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
     }
     ESP_LOGI(TAG, "Notification playback %lu %s", static_cast<unsigned long>(playback_id),
              success ? "completed" : "failed");
-    // 断网导致的失败：抓快照并挂起会话，待重连续播，不跳歌/停播。
-    // 正常断网会先走 HandleNetworkDisconnectedEvent 暂停；这里是竞态兜底
-    // （GMF 解码错误先于 WiFi 断网事件到达主任务）。
-    if (!success && !network_connected_) {
-        if (CapturePlaybackSnapshot()) {
-            PauseMusic();
-            music_network_paused_ = true;
-            ESP_LOGI(TAG, "Playback failed while offline, holding for reconnect");
-            return;
-        }
+    // 播放中断（解码/网络错误）不等于曲目结束：GMF 的完成回调在 ERROR/STOPPED 时
+    // 也以 success=false 上报，且往往早于 WiFi 断网事件。不能据此判定为坏曲目而跳歌，
+    // 否则断网时会连跳数首后停播。先尝试从 byte_pos 断点续播（有限次+退避）。
+    if (!success && TryResumeFromPlaybackError()) {
+        return;
     }
     StopNotification();
 
@@ -2012,6 +2111,9 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
             return;
         }
         music_fail_streak_ = success ? 0 : music_fail_streak_ + 1;
+        if (success) {
+            music_resume_retries_ = 0;  // 正常播完一首，清零续播重试计数
+        }
         if (music_fail_streak_ < 3 && music_cursor_ + 1 < music_order_.size()) {
             ++music_cursor_;
             next = music_playlist_[music_order_[music_cursor_]];

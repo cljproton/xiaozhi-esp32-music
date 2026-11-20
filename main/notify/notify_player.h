@@ -53,6 +53,11 @@ public:
         uint32_t playback_id = 0;
     };
     bool GetPlaybackInfo(PlaybackInfo& info) const;
+    // 播放中断回调里 active_ 已被清，但管道/IO 仍存活；读取最后已知字节位置用于断点续播
+    uint64_t GetLastBytePos() const;
+    uint32_t GetLastPositionMs() const { return gmf_playback_pos_ms_.load(); }
+    uint32_t GetLastDurationMs() const { return gmf_duration_ms_.load(); }
+    uint64_t GetLastFileSize() const { return gmf_file_size_; }
     bool Seek(uint32_t time_ms);
     void OnPlaybackProgress(uint32_t playback_id, uint32_t media_position_ms);
     void OnPlaybackDrained();
@@ -91,6 +96,7 @@ private:
     bool worker_running_ = false;
     std::atomic<uint32_t> gmf_playback_pos_ms_{0};
     std::atomic<uint32_t> gmf_duration_ms_{0};
+    std::atomic<uint64_t> gmf_byte_pos_{0};   // 最后已知的 HTTP IO 字节位置（供中断续播）
     bool cancelled_ = false;
     bool http_finished_ = false;
     bool stream_started_ = false;
