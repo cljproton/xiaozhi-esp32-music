@@ -674,6 +674,12 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
 
 bool NotifyPlayer::WaitForGmfFinish(uint32_t session_playback_id) {
     esp_gmf_event_state_t state = ESP_GMF_EVENT_STATE_NONE;
+    // 播放停滞看门狗：GMF IO job 失败（如断网）时，任务可能停在 RUNNING 而
+    // 不上报 ERROR，导致本函数永久等待、完成回调不触发、上层无从续播。
+    // 这里在播放已开始（position>0）后监测进度，若 N 秒不前进则判定为中断。
+    constexpr uint32_t kStallTimeoutMs = 12000;
+    uint32_t last_pos = 0;
+    uint32_t stall_ms = 0;
     while (true) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -687,6 +693,20 @@ bool NotifyPlayer::WaitForGmfFinish(uint32_t session_playback_id) {
         }
         if (state == ESP_GMF_EVENT_STATE_STOPPED || state == ESP_GMF_EVENT_STATE_ERROR) {
             return false;
+        }
+        uint32_t pos = gmf_playback_pos_ms_.load();
+        if (pos > 0) {
+            if (pos != last_pos) {
+                last_pos = pos;
+                stall_ms = 0;
+            } else {
+                stall_ms += 20;
+                if (stall_ms >= kStallTimeoutMs) {
+                    ESP_LOGW(TAG, "Playback stalled %u ms (pos=%u), treating as interrupted",
+                             stall_ms, pos);
+                    return false;  // 触发完成回调 -> 上层续播重试
+                }
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

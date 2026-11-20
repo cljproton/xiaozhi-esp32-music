@@ -1642,6 +1642,7 @@ bool Application::CapturePlaybackSnapshot() {
     s.byte_pos = byte_pos;      // 暂停/中断瞬间的真实 IO 位置
     s.file_size = file_size;
     s.mode = static_cast<uint8_t>(music_mode_);
+    s.restart_from_start = false;
     s.valid = true;
     ESP_LOGD(TAG, "Capture snapshot: pos=%u dur=%u byte=%llu size=%llu",
              s.position_ms, s.duration_ms, static_cast<unsigned long long>(s.byte_pos),
@@ -1688,10 +1689,13 @@ bool Application::RestartFromSnapshot() {
     if (previous_state == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
     }
-    ESP_LOGD(TAG, "Restart playback at %u ms, byte_pos=%llu, duration=%u ms",
-             snap.position_ms, static_cast<unsigned long long>(snap.byte_pos), snap.duration_ms);
+    uint64_t start_byte = snap.restart_from_start ? 0 : snap.byte_pos;
+    uint32_t start_pos = snap.restart_from_start ? 0 : snap.position_ms;
+    ESP_LOGD(TAG, "Restart playback at %u ms, byte_pos=%llu, duration=%u ms, from_start=%d",
+             start_pos, static_cast<unsigned long long>(start_byte), snap.duration_ms,
+             snap.restart_from_start);
     bool ok = StartNotification(track.audio_url, {}, track.username, track.password, track.title,
-                                snap.byte_pos, snap.position_ms, snap.duration_ms);
+                                start_byte, start_pos, snap.duration_ms);
     if (ok) {
         std::lock_guard<std::mutex> lock(music_mutex_);
         playback_snapshot_->valid = false;
@@ -1947,13 +1951,26 @@ bool Application::TryResumeFromPlaybackError() {
     if (!CapturePlaybackSnapshot()) {
         return false;
     }
+    // FLAC 的 micro-flac 解码器需要流首的 fLaC 头；从中间 byte_pos Range 续播
+    // 只会拿到裸音频帧，解码器报 INPUT_INVALID 失败。故 FLAC 续播改为从头重播。
+    {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (playback_snapshot_ && music_cursor_ < music_order_.size()) {
+            const auto& url = music_playlist_[music_order_[music_cursor_]].audio_url;
+            const char* ext = strrchr(url.c_str(), '.');
+            if (ext && strcasecmp(ext, ".flac") == 0) {
+                playback_snapshot_->restart_from_start = true;
+                ESP_LOGW(TAG, "FLAC track: resume from start (needs fLaC header)");
+            }
+        }
+    }
     // 只停底层流，保留音乐会话与快照，不销毁 Notifying 状态
     notify_player_.Stop();
     audio_service_.ResetDecoder();
     music_resume_retries_++;
     int backoff = 1 << (music_resume_retries_ - 1);  // 1,2,4,8,16 s
     if (backoff > 16) backoff = 16;
-    ESP_LOGW(TAG, "Playback interrupted, resume from byte pos in %ds (attempt %d/%d)",
+    ESP_LOGW(TAG, "Playback interrupted, retry in %ds (attempt %d/%d)",
              backoff, music_resume_retries_, kMaxMusicResumeRetries);
     if (music_retry_timer_ != nullptr) {
         esp_timer_start_once(music_retry_timer_, backoff * 1000 * 1000);

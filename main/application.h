@@ -274,6 +274,7 @@ private:
         uint64_t byte_pos = 0;
         uint64_t file_size = 0;
         uint8_t mode = 0;
+        bool restart_from_start = false;  // FLAC 续播需从 0 重新读 fLaC 头
         bool valid = false;
     };
     PlaybackSnapshot* playback_snapshot_ = nullptr;
@@ -291,7 +292,9 @@ private:
     static constexpr int kRadioBufferingTimeoutMs = 30000;
     static constexpr int kRadioWaitTtsTimeoutMs = 15000;  // TTS 未到时的兜底
     static constexpr int kNetworkResumeDebounceMs = 2000;  // 重连后续播去抖
-    static constexpr int kMaxMusicResumeRetries = 5;         // 播放中断后从断点续播的最大重试次数
+    // 播放中断后从断点续播：退避封顶 16s，长断网(1-2min)也持续重试，
+    // 累计 ~5min 仍失败才放弃，避免坏 URL 无限重试。
+    static constexpr int kMaxMusicResumeRetries = 20;
     static void RadioWatchdogCallback(void* arg);
     static void RadioPendingTimeoutCallback(void* arg);
     static void NetworkResumeTimerCallback(void* arg);
