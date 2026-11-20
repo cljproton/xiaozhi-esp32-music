@@ -97,6 +97,7 @@ private:
     std::atomic<uint32_t> gmf_playback_pos_ms_{0};
     std::atomic<uint32_t> gmf_duration_ms_{0};
     std::atomic<uint64_t> gmf_byte_pos_{0};   // 最后已知的 HTTP IO 字节位置（供中断续播）
+    std::atomic<bool> gmf_duration_exact_{false};  // 时长由解码器精确上报，禁止 CBR 估算覆盖
     bool cancelled_ = false;
     bool http_finished_ = false;
     bool stream_started_ = false;

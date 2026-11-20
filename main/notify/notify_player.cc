@@ -90,6 +90,8 @@ bool NotifyPlayer::Start(std::string audio_url, std::vector<NotifySubtitle> subt
         gmf_bits_ = 16;
         gmf_playback_pos_ms_ = 0;
         gmf_duration_ms_ = 0;
+        gmf_byte_pos_ = 0;
+        gmf_duration_exact_ = false;
     }
 
     BaseType_t created = xTaskCreate(WorkerEntry, "notify_http", kNotifyTaskStackSize, this,
@@ -335,7 +337,7 @@ int NotifyPlayer::GmfOutCb(uint8_t* data, int data_size, void* ctx) {
             // 持续记录真实 IO 字节位置：播放中断回调里 active_ 已清，靠它做断点续播
             self->gmf_byte_pos_.store(finfo.pos);
         }
-        if (io_ret == ESP_GMF_ERR_OK && finfo.size > 0) {
+        if (io_ret == ESP_GMF_ERR_OK && finfo.size > 0 && !self->gmf_duration_exact_) {
             double elapsed_sec = static_cast<double>(self->gmf_playback_pos_ms_) / 1000.0;
             if (elapsed_sec > 3.0 && self->gmf_duration_ms_ == 0) {  // 等待 3s 且未锁定时才计算
                 double bitrate_bps = (static_cast<double>(finfo.pos) * 8.0) / elapsed_sec;
@@ -387,6 +389,11 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     const char* ext = strrchr(audio_url.c_str(), '.');
     bool is_flac = ext && strcasecmp(ext, ".flac") == 0;
     const char* decoder_tag = is_flac ? mflac_decoder::kMflacDecoderTag : "aud_dec";
+    // FLAC 时长由解码器从 STREAMINFO 精确上报；在它到达前禁止 CBR 估算
+    // （开头封面块会让 CBR 严重低估时长）
+    if (is_flac) {
+        gmf_duration_exact_ = true;
+    }
 
     const char* el_names[4] = {decoder_tag};
     int num_el_names = 1;
@@ -412,7 +419,8 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     ++s_audio_dec_reg_ref_count;
     if (is_flac) {
         // micro-flac decoder: handles large PICTURE metadata blocks (configurable limit)
-        esp_gmf_err_t mret = mflac_decoder::mflac_decoder_init(&el);
+        // 传入时长指针，解码器解析 STREAMINFO 后直写精确时长
+        esp_gmf_err_t mret = mflac_decoder::mflac_decoder_init(&el, &gmf_duration_ms_);
         if (mret != ESP_GMF_ERR_OK) {
             ESP_LOGE(TAG, "Failed to init mflac decoder, ret:%d", mret);
             StopGmfPlayback();
@@ -577,7 +585,9 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     esp_gmf_task_cfg_t task_cfg = DEFAULT_ESP_GMF_TASK_CONFIG();
     task_cfg.thread.stack = 12 * 1024;
     task_cfg.thread.prio = 6;
-    task_cfg.thread.core = 0;
+    // 解码/播放任务放 core 1，HTTP IO 缓冲任务留在 core 0，两者分核，
+    // 避免网络接收与解码抢占同一核导致播放卡顿（core 0 还有 WiFi/音频输入）
+    task_cfg.thread.core = 1;
     // 栈放 PSRAM：内部 SRAM 紧张时 12KB 连续块分配失败会导致播放起不来
     task_cfg.thread.stack_in_ext = true;
     task_cfg.name = "audio";

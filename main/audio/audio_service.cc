@@ -132,14 +132,15 @@ void AudioService::Start() {
         },
         "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
 
-    /* Start the audio output task */
-    xTaskCreate(
+    /* Start the audio output task — 固定 core 1，与 GMF 解码同核，
+       和网络缓冲(HTTP IO, core 0)分离，避免播放卡顿 */
+    xTaskCreatePinnedToCore(
         [](void* arg) {
             AudioService* audio_service = (AudioService*)arg;
             audio_service->AudioOutputTask();
             vTaskDelete(NULL);
         },
-        "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+        "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_, 1);
 #else
     /* Start the audio input task */
     xTaskCreate(
@@ -150,14 +151,14 @@ void AudioService::Start() {
         },
         "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 
-    /* Start the audio output task */
-    xTaskCreate(
+    /* Start the audio output task — 固定 core 1，与 GMF 解码同核 */
+    xTaskCreatePinnedToCore(
         [](void* arg) {
             AudioService* audio_service = (AudioService*)arg;
             audio_service->AudioOutputTask();
             vTaskDelete(NULL);
         },
-        "audio_output", 2048, this, 4, &audio_output_task_handle_);
+        "audio_output", 2048, this, 4, &audio_output_task_handle_, 1);
 #endif
 
     /* Start the opus codec task */

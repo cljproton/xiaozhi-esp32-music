@@ -260,7 +260,7 @@ const I18N = {
     no_tracks: '这个音源没有音频文件', page_prev: '上一页', page_next: '下一页', volume: '音量',
     token_prompt: '请输入访问令牌', token_invalid: '令牌错误', delete_confirm: '删除当前音源？',
     track_count: '首', truncated: '（仅显示前 500 首）',
-    nav_home: '🏠 首页', nav_radio: '📻 电台'
+    nav_home: '🏠 首页', nav_radio: '📻 电台', progress_playing: '播放中'
   },
   en: {
     app_title: 'XiaoZhi Music', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
@@ -271,7 +271,7 @@ const I18N = {
     no_tracks: 'No audio files in this source', page_prev: 'Prev', page_next: 'Next', volume: 'Volume',
     token_prompt: 'Enter access token', token_invalid: 'Invalid token', delete_confirm: 'Delete current source?',
     track_count: 'track', truncated: '(first 500 shown)',
-    nav_home: '🏠 Home', nav_radio: '📻 Radio'
+    nav_home: '🏠 Home', nav_radio: '📻 Radio', progress_playing: 'Playing'
   }
 };
 const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
@@ -346,12 +346,15 @@ function renderStatus(st) {
     const pos_ms = playing.position_ms || 0;
     if (dur_s > 0) $('progress').max = Math.round(dur_s);
     $('progress').value = Math.min(parseFloat($('progress').max) || 3600, pos_ms / 1000);
-    if (dur_ms > 0) {
-      const disp_pos = Math.min(pos_ms, dur_ms);
-      $('progress-cur').textContent = fmtTime(disp_pos);
-      $('progress-rem').textContent = '-' + fmtTime(dur_ms - disp_pos);
+    if (dur_ms > 0 && pos_ms <= dur_ms) {
+      $('progress-cur').textContent = fmtTime(pos_ms);
+      $('progress-rem').textContent = '-' + fmtTime(dur_ms - pos_ms);
+    } else if (dur_ms > 0 && pos_ms > dur_ms) {
+      // 进度超过时长：时长估算失真，避免显示误导性的负倒计时
+      $('progress-cur').textContent = fmtTime(pos_ms);
+      $('progress-rem').textContent = tr('progress_playing');
     } else {
-      $('progress-cur').textContent = '0:00';
+      $('progress-cur').textContent = fmtTime(pos_ms);
       $('progress-rem').textContent = '--:--';
     }
     if (typeof playing.volume === 'number') $('volume-value').textContent = playing.volume;

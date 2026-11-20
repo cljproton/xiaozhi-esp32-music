@@ -13,6 +13,7 @@
 #include "esp_gmf_port.h"
 
 #include "micro_flac/flac_decoder.h"
+#include "esp_fourcc.h"
 
 #include <new>
 #include <cstring>
@@ -26,6 +27,7 @@ struct MflacConfig {
     uint32_t max_picture_size;
     uint32_t max_vorbis_comment_size;
     bool crc_check_enabled;
+    std::atomic<uint32_t>* duration_ms_out;  // 精确时长输出指针（可为 null）
 };
 
 // Element state: base must be first field.
@@ -91,7 +93,7 @@ static esp_gmf_err_t mflac_dec_new(void* cfg, esp_gmf_obj_handle_t* handle) {
     obj->del_obj = mflac_dec_destroy;
 
     // Duplicate config
-    MflacConfig cfg_copy = src_cfg ? *src_cfg : MflacConfig{50 * 1024, 4096, true};
+    MflacConfig cfg_copy = src_cfg ? *src_cfg : MflacConfig{50 * 1024, 4096, true, nullptr};
     MflacConfig* cfg_heap = (MflacConfig*)esp_gmf_oal_calloc(1, sizeof(MflacConfig));
     if (!cfg_heap) {
         esp_gmf_oal_free(dec);
@@ -228,14 +230,29 @@ static esp_gmf_job_err_t mflac_dec_process(esp_gmf_element_handle_t handle, void
             }
             dec->header_ready = true;
             esp_gmf_info_sound_t snd = {};
+            snd.format_id = ESP_FOURCC_FLAC;
             snd.sample_rates = info.sample_rate();
             snd.channels = info.num_channels();
             snd.bits = info.bits_per_sample();
-            snd.bitrate = 0;
+            // 复用 bitrate 字段上报精确时长(ms)：FLAC STREAMINFO 有总采样数，
+            // 可精确算出时长，避免上层用 CBR 估算（会被开头封面块带偏）。
+            uint32_t duration_ms = 0;
+            uint64_t total_samples = info.total_samples_per_channel();
+            if (snd.sample_rates > 0 && total_samples > 0) {
+                duration_ms = static_cast<uint32_t>(total_samples * 1000 / snd.sample_rates);
+            }
+            snd.bitrate = static_cast<int>(duration_ms);
+            // 直写时长输出指针（GMF 只转发最后一个元素的 REPORT_INFO，本解码器
+            // 在链首，其事件到不了用户回调，故用指针直传）
+            MflacConfig* mcfg = get_cfg(dec);
+            if (mcfg && mcfg->duration_ms_out && duration_ms > 0) {
+                mcfg->duration_ms_out->store(duration_ms);
+            }
             esp_gmf_audio_el_set_snd_info(handle, &snd);
             esp_gmf_element_notify_snd_info(handle, &snd);
-            ESP_LOGI(TAG, "FLAC header: rate=%u ch=%u bits=%u maxblk=%u outbuf=%u",
-                     snd.sample_rates, snd.channels, snd.bits, info.max_block_size(), dec->output_buffer_size);
+            ESP_LOGI(TAG, "FLAC header: rate=%u ch=%u bits=%u maxblk=%u outbuf=%u dur=%u ms",
+                     snd.sample_rates, snd.channels, snd.bits, info.max_block_size(),
+                     dec->output_buffer_size, duration_ms);
             out_load->valid_size = 0;
             out_load->is_done = false;
             job_ret = ESP_GMF_JOB_ERR_CONTINUE;
@@ -315,8 +332,9 @@ static esp_gmf_job_err_t mflac_dec_reset(esp_gmf_element_handle_t handle, void* 
 
 // ---------- public API ----------
 
-esp_gmf_err_t mflac_decoder_init(esp_gmf_element_handle_t* handle) {
-    MflacConfig cfg = {50 * 1024, 4096, true};
+esp_gmf_err_t mflac_decoder_init(esp_gmf_element_handle_t* handle,
+                                 std::atomic<uint32_t>* duration_ms_out) {
+    MflacConfig cfg = {50 * 1024, 4096, true, duration_ms_out};
     esp_gmf_err_t ret = mflac_dec_new(&cfg, (esp_gmf_obj_handle_t*)handle);
     if (ret == ESP_GMF_ERR_OK && *handle) {
         esp_gmf_obj_set_tag((esp_gmf_obj_t*)*handle, kMflacDecoderTag);
