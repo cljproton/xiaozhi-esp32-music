@@ -199,6 +199,7 @@ bool StationManager::SaveStationToNvs(const Station& station, int index) {
     cJSON_AddNumberToObject(json, "play_count", station.play_count);
     cJSON_AddNumberToObject(json, "last_played", station.last_played);
     cJSON_AddNumberToObject(json, "gain", station.gain);
+    cJSON_AddStringToObject(json, "source", station.source.c_str());
     
     char* json_str = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
@@ -259,6 +260,7 @@ bool StationManager::LoadStationsFromNvs() {
         cJSON* play_count = cJSON_GetObjectItem(json, "play_count");
         cJSON* last_played = cJSON_GetObjectItem(json, "last_played");
         cJSON* gain = cJSON_GetObjectItem(json, "gain");
+        cJSON* source = cJSON_GetObjectItem(json, "source");
         
         if (cJSON_IsString(id)) station.id = id->valuestring;
         if (cJSON_IsString(name)) station.name = name->valuestring;
@@ -271,6 +273,12 @@ bool StationManager::LoadStationsFromNvs() {
         if (cJSON_IsNumber(last_played)) station.last_played = last_played->valueint;
         if (cJSON_IsNumber(gain)) station.gain = std::clamp(gain->valueint, 50, 300);
         else station.gain = 100;  // Default for old entries without gain
+        // 旧数据没有 source 字段，一律视为 radio-browser（URL 锁定）
+        if (cJSON_IsString(source) && source->valuestring[0] != '\0') {
+            station.source = source->valuestring;
+        } else {
+            station.source = "radio-browser";
+        }
         
         cJSON_Delete(json);
         

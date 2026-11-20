@@ -64,6 +64,15 @@ Application::Application() : notify_player_(audio_service_),
         .name = "radio_watchdog",
         .skip_unhandled_events = true};
     esp_timer_create(&wd_args, &radio_watchdog_timer_);
+
+    // 电台等待 TTS 兜底超时：AI 触发的起流若迟迟等不到 tts stop，到点强制起播
+    esp_timer_create_args_t pending_args = {
+        .callback = RadioPendingTimeoutCallback,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "radio_pending",
+        .skip_unhandled_events = true};
+    esp_timer_create(&pending_args, &radio_pending_timer_);
 }
 
 Application::~Application() {
@@ -72,6 +81,11 @@ Application::~Application() {
         esp_timer_stop(radio_watchdog_timer_);
         esp_timer_delete(radio_watchdog_timer_);
         radio_watchdog_timer_ = nullptr;
+    }
+    if (radio_pending_timer_ != nullptr) {
+        esp_timer_stop(radio_pending_timer_);
+        esp_timer_delete(radio_pending_timer_);
+        radio_pending_timer_ = nullptr;
     }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
@@ -723,6 +737,13 @@ void Application::InitializeProtocol() {
                         } else {
                             SetDeviceState(kDeviceStateListening);
                         }
+                    }
+                    // 本轮 TTS 结束：解除电台的等待标记并停掉兜底 timer
+                    if (pending_radio_wait_tts_) {
+                        if (radio_pending_timer_ != nullptr) {
+                            esp_timer_stop(radio_pending_timer_);
+                        }
+                        pending_radio_wait_tts_ = false;
                     }
                     MaybeStartPendingRadio();
                 });
@@ -1679,7 +1700,7 @@ void Application::SetRadioPlaying(bool playing) {
     audio_service_.EnableWakeWordDetection(!playing && audio_service_.IsAfeWakeWord());
 }
 
-void Application::StartRadio(const std::string& url) {
+void Application::StartRadio(const std::string& url, bool wait_for_tts) {
     if (url.empty()) {
         return;
     }
@@ -1690,7 +1711,20 @@ void Application::StartRadio(const std::string& url) {
     if (GetMusicStatus().active) {
         StopMusicPlayback();
     }
+    // 清掉上一次可能残留的等待状态
+    pending_radio_wait_tts_ = false;
+    if (radio_pending_timer_ != nullptr) {
+        esp_timer_stop(radio_pending_timer_);
+    }
+
     pending_radio_url_ = url;
+    if (wait_for_tts) {
+        // AI 工具调用：等本轮 tts stop（或兜底超时）再真正起流，避免 TTS 卡顿
+        pending_radio_wait_tts_ = true;
+        if (radio_pending_timer_ != nullptr) {
+            esp_timer_start_once(radio_pending_timer_, kRadioWaitTtsTimeoutMs * 1000);
+        }
+    }
     MaybeStartPendingRadio();
 }
 
@@ -1698,16 +1732,43 @@ void Application::MaybeStartPendingRadio() {
     if (pending_radio_url_.empty() || !radio_start_handler_) {
         return;
     }
+    if (pending_radio_wait_tts_) {
+        return;  // 等 tts stop 或兜底超时清标记
+    }
     if (GetDeviceState() == kDeviceStateSpeaking) {
-        return;  // 等 TTS 播完再起流
+        return;  // 保守：仍在说话则不打断
     }
     auto url = std::move(pending_radio_url_);
     pending_radio_url_.clear();
+    if (radio_pending_timer_ != nullptr) {
+        esp_timer_stop(radio_pending_timer_);
+    }
     radio_start_handler_(url);
+    // 电台起流后自动进入空闲：不进入监听态，避免扬声器声音回灌麦克风
+    auto state = GetDeviceState();
+    if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+}
+
+void Application::RadioPendingTimeoutCallback(void* arg) {
+    auto* self = static_cast<Application*>(arg);
+    self->Schedule([self]() {
+        if (self->pending_radio_wait_tts_) {
+            ESP_LOGW(TAG, "Radio TTS wait timeout (%d ms), starting anyway",
+                     kRadioWaitTtsTimeoutMs);
+            self->pending_radio_wait_tts_ = false;
+            self->MaybeStartPendingRadio();
+        }
+    });
 }
 
 void Application::StopRadio() {
     pending_radio_url_.clear();
+    pending_radio_wait_tts_ = false;
+    if (radio_pending_timer_ != nullptr) {
+        esp_timer_stop(radio_pending_timer_);
+    }
     radio_playing_ = false;
     audio_service_.SetExternalPlaybackActive(false);
     ArmRadioWatchdog(false);

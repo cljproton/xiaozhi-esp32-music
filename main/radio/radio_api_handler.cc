@@ -99,6 +99,7 @@ static esp_err_t HandleStationsGet(httpd_req_t* req) {
         cJSON_AddStringToObject(o, "genre", s.genre.c_str());
         cJSON_AddStringToObject(o, "country", s.country.c_str());
         cJSON_AddNumberToObject(o, "gain", s.gain);
+        cJSON_AddStringToObject(o, "source", s.source.c_str());
         cJSON_AddItemToArray(arr, o);
     }
     return SendJson(req, o);
@@ -119,6 +120,10 @@ static esp_err_t HandleStationsPost(httpd_req_t* req) {
     std::string url = field("url");
     std::string genre = field("genre");
     std::string country = field("country");
+    std::string source = field("source");
+    if (source != "custom" && source != "radio-browser") {
+        source = "custom";  // 网页未知来源一律当作自定义（可编辑）
+    }
     cJSON* gain_item = cJSON_GetObjectItem(root, "gain");
     int gain = cJSON_IsNumber(gain_item) ? std::clamp(gain_item->valueint, 50, 300) : 100;
 
@@ -149,6 +154,7 @@ static esp_err_t HandleStationsPost(httpd_req_t* req) {
     station.genre = genre;
     station.country = country;
     station.gain = gain;
+    station.source = source;
     cleanup();
 
     if (!mgr.AddStation(station)) {
@@ -338,6 +344,10 @@ static esp_err_t HandleStationsPut(httpd_req_t* req) {
         return SendError(req, HTTPD_400_BAD_REQUEST, "index out of range");
     }
     StationManager::Station station = stations[index - 1];
+    // radio-browser 来源的电台 URL 锁定，不允许编辑；自定义电台可编辑
+    if (station.source == "radio-browser") {
+        return SendError(req, HTTPD_400_BAD_REQUEST, "radio-browser station URL is read-only");
+    }
     station.url = url;
     if (!mgr.UpdateStation(station)) {
         return SendError(req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to update");

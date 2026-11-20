@@ -23,6 +23,7 @@ public:
         int play_count = 0;
         int64_t last_played = 0; // timestamp
         int gain = 100;          // playback gain percentage (100 = normal)
+        std::string source;      // "radio-browser" (URL 锁定) / "custom" (可编辑)
     };
 
     StationManager();

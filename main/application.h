@@ -192,7 +192,8 @@ public:
     void SetRadioStartHandler(std::function<void(const std::string&)> handler) {
         radio_start_handler_ = std::move(handler);
     }
-    void StartRadio(const std::string& url);
+    // wait_for_tts=true: AI 工具调用，等本轮 TTS 播完（或超时）再真正起流
+    void StartRadio(const std::string& url, bool wait_for_tts = false);
     void StopRadio();
     void ArmRadioWatchdog(bool arm);
     // NVS 持久化的播放模式与选中音源（"music" 命名空间）
@@ -280,11 +281,15 @@ private:
     std::function<void()> radio_stop_handler_;
     std::function<void(const std::string&)> radio_start_handler_;
     std::string pending_radio_url_;
+    bool pending_radio_wait_tts_ = false;       // 等本轮 TTS 结束再起流
     bool radio_playing_ = false;
     esp_timer_handle_t radio_watchdog_timer_ = nullptr;
+    esp_timer_handle_t radio_pending_timer_ = nullptr;  // TTS 等待兜底超时
     bool radio_watchdog_armed_ = false;
     static constexpr int kRadioBufferingTimeoutMs = 30000;
+    static constexpr int kRadioWaitTtsTimeoutMs = 15000;  // TTS 未到时的兜底
     static void RadioWatchdogCallback(void* arg);
+    static void RadioPendingTimeoutCallback(void* arg);
     void HandleRadioWatchdogTimeout();
     void MaybeStartPendingRadio();
 

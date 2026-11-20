@@ -383,7 +383,7 @@ void McpServer::AddCommonTools() {
                             return std::unexpected("没有匹配的电台。" + hint);
                         }
                         radio_source->SetVolume(100);
-                        Application::GetInstance().StartRadio(matches.front().url);
+                        Application::GetInstance().StartRadio(matches.front().url, true);
                         return "正在播放：" + matches.front().name;
                     });
 
@@ -395,7 +395,7 @@ void McpServer::AddCommonTools() {
                         if (stations.empty()) {
                             return std::unexpected("设备上还没有保存电台，请用 radio.web_guide 查看配置网页。");
                         }
-                        Application::GetInstance().StartRadio(stations.front().url);
+                        Application::GetInstance().StartRadio(stations.front().url, true);
                         return "正在播放默认电台：" + stations.front().name;
                     });
 
@@ -409,7 +409,7 @@ void McpServer::AddCommonTools() {
                     [radio_source](const PropertyList&) -> ToolResult {
                         auto station = radio_source->GetStationManager().GetNextStation();
                         if (!station) return std::string("没有下一个电台");
-                        Application::GetInstance().StartRadio(station->url);
+                        Application::GetInstance().StartRadio(station->url, true);
                         return "正在播放：" + station->name;
                     });
 
@@ -417,7 +417,7 @@ void McpServer::AddCommonTools() {
                     [radio_source](const PropertyList&) -> ToolResult {
                         auto station = radio_source->GetStationManager().GetPrevStation();
                         if (!station) return std::string("没有上一个电台");
-                        Application::GetInstance().StartRadio(station->url);
+                        Application::GetInstance().StartRadio(station->url, true);
                         return "正在播放：" + station->name;
                     });
 
