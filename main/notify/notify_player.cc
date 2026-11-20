@@ -627,6 +627,11 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
         if (info.format_id == 0) {
             info.format_id = ESP_FOURCC_MP3;
         }
+        // .opus 文件通常是 Ogg-Opus 容器；按 OPUS 配置会走裸帧解码路径而失败，
+        // 按 OGG 配置则由 OGG 解复用器正确处理。改名后缀对齐到 OGG 链路。
+        if (info.format_id == ESP_FOURCC_OPUS) {
+            info.format_id = ESP_FOURCC_OGG;
+        }
         ret = esp_gmf_audio_dec_reconfig_by_sound_info(dec_el, &info);
         if (ret != ESP_GMF_ERR_OK) {
             ESP_LOGE(TAG, "Failed to reconfig GMF decoder, ret:%d", ret);

@@ -1115,8 +1115,8 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
             std::string lower = href;
             std::transform(lower.begin(), lower.end(), lower.begin(),
                            [](unsigned char c) { return std::tolower(c); });
-            static const char* kAudioExtensions[] = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus",
-                                                      "aiff"};
+            // aiff 无对应解码器（会被误当 MP3 解），故不列入
+            static const char* kAudioExtensions[] = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus"};
             bool is_audio = false;
             for (const auto& ext : kAudioExtensions) {
                 std::string ext_lower = ext;
