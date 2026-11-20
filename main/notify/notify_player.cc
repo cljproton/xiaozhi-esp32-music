@@ -25,6 +25,7 @@
 #include "esp_gmf_rate_cvt.h"
 #include "esp_gmf_task.h"
 #include "esp_http_client.h"
+#include "mflac_decoder.h"
 
 #include "board.h"
 
@@ -377,7 +378,13 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     }
     gmf_pool_ = pool;
 
-    const char* el_names[4] = {"aud_dec"};
+    // Detect FLAC by URL extension; use micro-flac element to avoid the
+    // esp_audio_codec FLAC parser's 512KB limit on large PICTURE blocks.
+    const char* ext = strrchr(audio_url.c_str(), '.');
+    bool is_flac = ext && strcasecmp(ext, ".flac") == 0;
+    const char* decoder_tag = is_flac ? mflac_decoder::kMflacDecoderTag : "aud_dec";
+
+    const char* el_names[4] = {decoder_tag};
     int num_el_names = 1;
 #ifdef CONFIG_ESP_AUDIO_SIMPLE_PLAYER_RESAMPLE_EN
     el_names[num_el_names++] = "aud_rate_cvt";
@@ -399,15 +406,25 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
         esp_audio_simple_dec_register_default();
     }
     ++s_audio_dec_reg_ref_count;
-    esp_audio_simple_dec_cfg_t dec_cfg = {};
-    dec_cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_NONE;
-    dec_cfg.dec_cfg = NULL;
-    dec_cfg.cfg_size = 0;
-    dec_cfg.use_frame_dec = false;
-    if (esp_gmf_audio_dec_init(&dec_cfg, &el) != ESP_GMF_ERR_OK) {
-        ESP_LOGE(TAG, "Failed to init GMF audio decoder");
-        StopGmfPlayback();
-        return false;
+    if (is_flac) {
+        // micro-flac decoder: handles large PICTURE metadata blocks (configurable limit)
+        esp_gmf_err_t mret = mflac_decoder::mflac_decoder_init(&el);
+        if (mret != ESP_GMF_ERR_OK) {
+            ESP_LOGE(TAG, "Failed to init mflac decoder, ret:%d", mret);
+            StopGmfPlayback();
+            return false;
+        }
+    } else {
+        esp_audio_simple_dec_cfg_t dec_cfg = {};
+        dec_cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_NONE;
+        dec_cfg.dec_cfg = NULL;
+        dec_cfg.cfg_size = 0;
+        dec_cfg.use_frame_dec = false;
+        if (esp_gmf_audio_dec_init(&dec_cfg, &el) != ESP_GMF_ERR_OK) {
+            ESP_LOGE(TAG, "Failed to init GMF audio decoder");
+            StopGmfPlayback();
+            return false;
+        }
     }
     if (esp_gmf_pool_register_element(gmf_pool_, el, NULL) != ESP_GMF_ERR_OK) {
         ESP_LOGE(TAG, "Failed to register GMF audio decoder");
@@ -579,26 +596,29 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
     }
 
     esp_gmf_element_handle_t dec_el = nullptr;
-    ret = esp_gmf_pipeline_get_el_by_name(gmf_pipeline_, "aud_dec", &dec_el);
+    ret = esp_gmf_pipeline_get_el_by_name(gmf_pipeline_, decoder_tag, &dec_el);
     if (ret != ESP_GMF_ERR_OK) {
         ESP_LOGE(TAG, "Failed to get GMF decoder element, ret:%d", ret);
         StopGmfPlayback();
         return false;
     }
-    esp_gmf_info_sound_t info = {};
-    info.sample_rates = 16000;
-    info.channels = 1;
-    info.bits = 16;
-    info.bitrate = 0;
-    esp_gmf_audio_helper_get_audio_type_by_uri(audio_url.c_str(), &info.format_id);
-    if (info.format_id == 0) {
-        info.format_id = ESP_FOURCC_MP3;
-    }
-    ret = esp_gmf_audio_dec_reconfig_by_sound_info(dec_el, &info);
-    if (ret != ESP_GMF_ERR_OK) {
-        ESP_LOGE(TAG, "Failed to reconfig GMF decoder, ret:%d", ret);
-        StopGmfPlayback();
-        return false;
+    if (!is_flac) {
+        // mflac decodes the real stream header itself; only the standard decoder needs reconfig
+        esp_gmf_info_sound_t info = {};
+        info.sample_rates = 16000;
+        info.channels = 1;
+        info.bits = 16;
+        info.bitrate = 0;
+        esp_gmf_audio_helper_get_audio_type_by_uri(audio_url.c_str(), &info.format_id);
+        if (info.format_id == 0) {
+            info.format_id = ESP_FOURCC_MP3;
+        }
+        ret = esp_gmf_audio_dec_reconfig_by_sound_info(dec_el, &info);
+        if (ret != ESP_GMF_ERR_OK) {
+            ESP_LOGE(TAG, "Failed to reconfig GMF decoder, ret:%d", ret);
+            StopGmfPlayback();
+            return false;
+        }
     }
     ret = esp_gmf_pipeline_set_in_uri(gmf_pipeline_, audio_url.c_str());
     if (ret != ESP_GMF_ERR_OK) {
