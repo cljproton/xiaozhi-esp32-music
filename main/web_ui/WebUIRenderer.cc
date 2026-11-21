@@ -28,6 +28,11 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     </nav>
   </header>
 
+  <a class="banner" href="https://fn.9418666.xyz" target="_blank" rel="noopener">
+    <span class="banner-title">FinNav</span>
+    <span class="banner-desc">打开更广阔的格局</span>
+  </a>
+
   <section class="card source-card">
     <div class="row">
       <select id="source"><option value="">暂无音源</option></select>
@@ -80,9 +85,8 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     </div>
     <div class="row volume">
       <span id="vol-label" data-i18n="volume">音量</span>
-      <button id="btn-vol-down" type="button">-</button>
-      <span id="volume-value">70</span>
-      <button id="btn-vol-up" type="button">+</button>
+      <input type="range" id="vol" min="0" max="100" step="1" value="70" aria-label="volume">
+      <span id="volume-value">70%</span>
     </div>
   </div>
 </div>
@@ -234,7 +238,11 @@ form .row button { flex: 1; }
 .progress span { flex: none; font-variant-numeric: tabular-nums; }
 .volume { font-size: 0.78rem; color: #94a3b8; display: flex; align-items: center; gap: 8px; }
 .volume button { flex: none; padding: 6px 12px; font-size: 0.8rem; }
-.volume #volume-value { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; color: #e6edf7; }
+.volume input[type="range"] { flex: 1; min-width: 60px; accent-color: #22d3ee; }
+.volume #volume-value { min-width: 3ch; text-align: center; font-variant-numeric: tabular-nums; color: #e6edf7; }
+.banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: rgba(15, 23, 42, 0.66); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; text-decoration: none; color: var(--fg); backdrop-filter: blur(12px); }
+.banner-title { font-size: 15px; font-weight: 700; }
+.banner-desc { font-size: 12px; color: #94a3b8; }
 @media (max-width: 480px) { .app { padding-bottom: 250px; } }
 )CSS";
 
@@ -246,7 +254,6 @@ let sourceIndex = 0;
 let page = 1;
 let pages = 1;
 let playing = { active: false };
-let volume = 70;
 let pollTimer = null;
 let lang = localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'zh';
 
@@ -357,7 +364,13 @@ function renderStatus(st) {
       $('progress-cur').textContent = fmtTime(pos_ms);
       $('progress-rem').textContent = '--:--';
     }
-    if (typeof playing.volume === 'number') $('volume-value').textContent = playing.volume;
+    if (typeof playing.volume === 'number') {
+      const slider = $('vol');
+      if (document.activeElement !== slider) {
+        slider.value = playing.volume;
+        $('volume-value').textContent = playing.volume + '%';
+      }
+    }
   }
   markActive();
 }
@@ -486,13 +499,10 @@ $('shuffle').addEventListener('change', async () => {
   await api('/api/music/mode', { method: 'POST', body: JSON.stringify({ mode: mode() }) });
   await pollStatus();
 });
-async function setVolume(v) {
-  volume = Math.max(0, Math.min(100, v));
-  await api('/api/music/volume', { method: 'POST', body: JSON.stringify({ volume }) });
-  $('volume-value').textContent = volume;
-}
-$('btn-vol-up').addEventListener('click', () => setVolume(volume + 10));
-$('btn-vol-down').addEventListener('click', () => setVolume(volume - 10));
+const volEl = $('vol');
+const volVal = $('volume-value');
+volEl.oninput = () => { volVal.textContent = volEl.value + '%'; };
+volEl.onchange = async () => { try { await api('/api/music/volume', { method: 'POST', body: JSON.stringify({ volume: +volEl.value }) }); } catch (e) {} };
 $('btn-page-prev').addEventListener('click', () => {
   if (page > 1) { page--; loadTracks(); }
 });

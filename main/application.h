@@ -290,11 +290,14 @@ private:
     esp_timer_handle_t radio_pending_timer_ = nullptr;  // TTS 等待兜底超时
     bool radio_watchdog_armed_ = false;
     static constexpr int kRadioBufferingTimeoutMs = 30000;
+    static constexpr uint8_t kPlaybackBacklightDim = 20;  // 外部播放中降低屏幕背光亮度，播放完恢复
     static constexpr int kRadioWaitTtsTimeoutMs = 15000;  // TTS 未到时的兜底
     static constexpr int kNetworkResumeDebounceMs = 2000;  // 重连后续播去抖
     // 播放中断后从断点续播：退避封顶 16s，长断网(1-2min)也持续重试，
     // 累计 ~5min 仍失败才放弃，避免坏 URL 无限重试。
     static constexpr int kMaxMusicResumeRetries = 20;
+    // 外部播放（电台/音乐）期间降低屏幕背光耗电，播放结束/暂停恢复
+    void SetBacklightForPlayback(bool playing);
     static void RadioWatchdogCallback(void* arg);
     static void RadioPendingTimeoutCallback(void* arg);
     static void NetworkResumeTimerCallback(void* arg);

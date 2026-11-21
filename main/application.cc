@@ -1416,6 +1416,8 @@ bool Application::StartNotification(std::string audio_url, std::vector<NotifySub
             }
         });
     }
+    // 外部播放（音乐）开始：降低屏幕背光耗电；AI 语音不参与此减耗
+    SetBacklightForPlayback(music_active_);
     return true;
 }
 
@@ -1430,6 +1432,7 @@ void Application::StopNotification(bool force) {
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    SetBacklightForPlayback(false);
     if (GetDeviceState() == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
     }
@@ -1726,6 +1729,7 @@ bool Application::PauseMusic() {
         music_position_ms_ = static_cast<int>(playback_snapshot_->position_ms);
     }
     notify_player_.Stop();
+    SetBacklightForPlayback(false);  // 暂停：回到正常亮度
     return true;
 }
 
@@ -1783,9 +1787,23 @@ void Application::SetRadioPlaying(bool playing) {
     audio_service_.SetExternalPlaybackActive(playing);
     Board::GetInstance().SetPowerSaveLevel(playing ? PowerSaveLevel::PERFORMANCE
                                                   : PowerSaveLevel::LOW_POWER);
+    SetBacklightForPlayback(playing);
     // 电台播放期间关闭唤醒词，避免扬声器声音回灌；停止后恢复
     audio_service_.EnableVoiceProcessing(false);
     audio_service_.EnableWakeWordDetection(!playing && audio_service_.IsAfeWakeWord());
+}
+
+void Application::SetBacklightForPlayback(bool playing) {
+    Backlight* backlight = Board::GetInstance().GetBacklight();
+    if (backlight == nullptr) {
+        return;
+    }
+    if (playing) {
+        // 外部播放（电台/音乐）期间降低屏幕背光耗电；恢复时回到用户设置亮度
+        backlight->SetBrightness(kPlaybackBacklightDim);
+    } else {
+        backlight->RestoreBrightness();
+    }
 }
 
 void Application::StartRadio(const std::string& url, bool wait_for_tts) {
@@ -1861,6 +1879,7 @@ void Application::StopRadio() {
     }
     radio_playing_ = false;
     audio_service_.SetExternalPlaybackActive(false);
+    SetBacklightForPlayback(false);
     ArmRadioWatchdog(false);
     if (radio_stop_handler_) {
         // 电台 Stop() 可能阻塞等待 HTTP 段读取返回，放到一次性任务里执行，
