@@ -250,7 +250,8 @@ public:
                     }
                 }
                 if (msg->event_id == HTTP_STREAM_ON_RESPONSE) {
-                    ESP_LOGI(TAG, "HTTP data: %d bytes", msg->buffer_len);
+                    // 每 3KB 一次，I 级在 115200 串口下每片要阻塞约 100ms
+                    ESP_LOGV(TAG, "HTTP data: %d bytes", msg->buffer_len);
                 }
                 if (msg->event_id == HTTP_STREAM_FINISH_REQUEST) {
                     ESP_LOGI(TAG, "HTTP request finished, took %lld ms",

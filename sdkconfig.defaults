@@ -30,14 +30,13 @@ CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUFFER=y
 
-# 同名多 AP 自动选最强并主动漫游（不支持 k/v/r 的 AP 会自动回退到 legacy）
-CONFIG_ESP_WIFI_ENABLE_ROAMING_APP=y
+# 关闭主动漫游：RSSI 低于 -60 就会 off-channel 扫描，扫描期间 HLS 分片下载被
+# 打断（实测 150s 内 6 次 Issued Scan），而单 AP 场景下换不了 AP 只是白丢吞吐。
+# CONFIG_ESP_WIFI_ENABLE_ROAMING_APP is not set
 CONFIG_ESP_WIFI_11KV_SUPPORT=y
 CONFIG_ESP_WIFI_MBO_SUPPORT=y
 CONFIG_ESP_WIFI_11R_SUPPORT=y
 CONFIG_ESP_WIFI_NETWORK_ASSISTED_ROAMING_RETRY_COUNT=1
-# 实际环境中 AP 不支持 802.11v 时，网络辅助方式不会触发切换；只用 legacy 保证能漫游
-CONFIG_ESP_WIFI_ROAMING_NETWORK_ASSISTED_ROAM=n
 
 # These entries are copied from ESP-HI (ESP32C3) to reduce memory usage
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
