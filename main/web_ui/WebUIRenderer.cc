@@ -23,6 +23,7 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     <nav class="top-nav">
       <a href="/" data-i18n="nav_home">首页</a>
       <a href="/radio" data-i18n="nav_radio">电台</a>
+      <a href="/config">⚙️ 配置</a>
       <span class="badge" id="badge">待机</span>
       <button id="btn-lang" class="lang-btn" type="button">EN</button>
     </nav>
@@ -108,6 +109,9 @@ const char* kHomeHtmlTemplate = R"HTML(<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;padding:20px 14px}
 .app{max-width:640px;margin:0 auto}
+.top-nav{display:flex;gap:10px;margin-bottom:16px}
+.top-nav a{color:var(--dim);text-decoration:none;font-size:14px}
+.top-nav a:hover{color:var(--acc)}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
 h1{font-size:1.5rem}
 h2{font-size:1.1rem;margin-bottom:6px}
@@ -117,43 +121,25 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
 .card:hover{border-color:var(--acc);transform:translateY(-2px)}
 .card .icon{font-size:28px;margin-bottom:10px}
 .card small{color:var(--dim);font-size:13px}
-.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
-label{display:block;font-size:13px;color:var(--dim);margin-bottom:5px}
-input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:9px;font-size:14px;margin-bottom:10px}
-button{background:var(--acc);color:#06202a;border:0;border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer}
-#msg{color:#f88;font-size:13px;min-height:18px;margin-top:8px}
 </style>
 </head>
 <body>
 <div class="app">
+  <div class="top-nav"><a href="/music">🎵 音乐</a><a href="/radio">📻 电台</a><a href="/config">⚙️ 配置</a></div>
   <header><h1 id="welcome">欢迎使用小智</h1></header>
   <p id="intro">这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。</p>
   <div class="cards">
     <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music">音乐播放器</h2><small id="d-music">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
     <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio">网络电台</h2><small id="d-radio">搜索、收藏和播放网络电台</small></a>
-  </div>
-  <div class="panel">
-    <h2 id="t-pw">修改登录密码</h2>
-    <label for="old" id="l-old">当前密码</label><input id="old" type="password" autocomplete="current-password">
-    <label for="new" id="l-new">新密码</label><input id="new" type="password" autocomplete="new-password">
-    <button id="change" type="button">修改密码</button>
-    <div id="msg"></div>
+    <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、待机背景/天气</small></a>
   </div>
 </div>
 <script>
-const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',pw:'修改登录密码',old:'当前密码',nw:'新密码',change:'修改密码',ok:'密码已修改',fail:'修改失败，请检查当前密码'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',pw:'Change Password',old:'Current password',nw:'New password',change:'Change password',ok:'Password changed',fail:'Failed to change password'}};
+const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',config:'设备配置',dconfig:'修改密码、睡眠模式、待机背景/天气'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',config:'Settings',dconfig:'Password, sleep mode, standby bg/weather'}};
 const lang=(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en';const T=I18N[lang];
-for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-pw','pw'],['l-old','old'],['l-new','nw'],['change','change']]){const el=document.getElementById(id);if(el)el.textContent=T[key];}
+for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-config','config'],['d-config','dconfig']]){const el=document.getElementById(id);if(el)el.textContent=T[key];}
 const $=id=>document.getElementById(id);
 fetch('/api/auth').then(r=>r.json()).then(d=>{if(!d.authenticated)location.replace('/login?next=/');}).catch(()=>location.replace('/login?next=/'));
-$('change').addEventListener('click',async()=>{
-  $('msg').textContent='';
-  try{
-    const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'change',old_password:$('old').value,new_password:$('new').value})});
-    if(r.ok)$('msg').textContent=T.ok;else $('msg').textContent=T.fail;
-    $('old').value='';$('new').value='';
-  }catch(e){$('msg').textContent=T.fail;}
-});
 </script>
 </body>
 </html>)HTML";
@@ -267,7 +253,7 @@ const I18N = {
     no_tracks: '这个音源没有音频文件', page_prev: '上一页', page_next: '下一页', volume: '音量',
     token_prompt: '请输入访问令牌', token_invalid: '令牌错误', delete_confirm: '删除当前音源？',
     track_count: '首', truncated: '（仅显示前 500 首）',
-    nav_home: '🏠 首页', nav_radio: '📻 电台', progress_playing: '播放中'
+    nav_home: '🏠 首页', nav_radio: '📻 电台', nav_config: '⚙️ 配置', progress_playing: '播放中'
   },
   en: {
     app_title: 'XiaoZhi Music', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
@@ -278,7 +264,7 @@ const I18N = {
     no_tracks: 'No audio files in this source', page_prev: 'Prev', page_next: 'Next', volume: 'Volume',
     token_prompt: 'Enter access token', token_invalid: 'Invalid token', delete_confirm: 'Delete current source?',
     track_count: 'track', truncated: '(first 500 shown)',
-    nav_home: '🏠 Home', nav_radio: '📻 Radio', progress_playing: 'Playing'
+    nav_home: '🏠 Home', nav_radio: '📻 Radio', nav_config: '⚙️ Config', progress_playing: 'Playing'
   }
 };
 const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;

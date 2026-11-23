@@ -40,10 +40,50 @@ class StartupAssetsTests(unittest.TestCase):
             #define BOARD_NAME "host-board"
             #define ESP_LOGI(...) ((void)0)
             #define ESP_LOGW(...) ((void)0)
-            #define pdMS_TO_TICKS(ms) (ms)
-            void vTaskDelay(int) {}
-            void xEventGroupSetBits(int, int) {}
-            void esp_timer_start_periodic(int, int) {}
+            #define ESP_LOGD(...) ((void)0)
+            #define ESP_LOGE(...) ((void)0)
+            #define ESP_OK 0
+            #define LV_COLOR_FORMAT_RGB565 0
+            typedef int esp_err_t;
+            void heap_caps_free(void*) {}
+            #include <memory>
+            #include <string>
+            #include <vector>
+            #include <cstdint>
+            void* lv_screen_active() { return nullptr; }
+            void lv_obj_create(void*) {}
+            void lv_obj_set_size(void*, int, int) {}
+            void lv_obj_set_style_radius(void*, int, int) {}
+            void lv_obj_set_style_pad_all(void*, int, int) {}
+            void lv_obj_set_style_border_width(void*, int, int) {}
+            void lv_obj_set_style_bg_color(void*, int, int) {}
+            void lv_obj_set_style_bg_opa(void*, int, int) {}
+            void lv_obj_align(void*, int, int, int, int) {}
+            void lv_obj_add_flag(void*, int) {}
+            void lv_obj_remove_flag(void*, int) {}
+            void lv_obj_set_style_text_color(void*, int, int) {}
+            void lv_obj_set_style_text_opa(void*, int, int) {}
+            const void* lvgl_theme_background_color() { return nullptr; }
+            struct LvglImgDscHeader { int w = 0; int h = 0; };
+            struct LvglImgDsc { LvglImgDscHeader header; };
+            struct LvglImage {
+                virtual const LvglImgDsc* image_dsc() const = 0;
+                virtual ~LvglImage() = default;
+            };
+            struct LvglAllocatedImage : LvglImage {
+                LvglAllocatedImage(void*, size_t, int, int, int, int) {}
+                virtual const LvglImgDsc* image_dsc() const override { static LvglImgDsc d; return &d; }
+                bool IsValid() const { return true; }
+            };
+            esp_err_t jpeg_to_image_fit(const void*, size_t, int, int, uint8_t**, size_t*, size_t*, size_t*, size_t*) { return ESP_OK; }
+            namespace standby {
+                bool HasBackgroundImage() { return false; }
+                bool LoadBackgroundImage(std::string& out) { out.clear(); return false; }
+                bool SaveBackgroundImage(const uint8_t*, size_t) { return true; }
+                bool ClearBackgroundImage() { return true; }
+                bool ClearBackgroundUrl() { return true; }
+            }
+            enum class MusicPlayMode { kSequential, kShuffle };
             enum {
                 MAIN_EVENT_SEND_AUDIO, MAIN_EVENT_WAKE_WORD_DETECTED,
                 MAIN_EVENT_VAD_CHANGE, MAIN_EVENT_PLAYBACK_DRAINED,
@@ -93,6 +133,7 @@ class StartupAssetsTests(unittest.TestCase):
             class Display {
             public:
                 void SetupUI() { ui_ready = true; }
+                void SetStandbyImage(std::unique_ptr<LvglImage>) {}
                 void SetChatMessage(const char*, const char*) {}
                 void SetStatus(const char*) {}
                 bool SetEmotion(const char*) { return true; }
@@ -171,6 +212,9 @@ class StartupAssetsTests(unittest.TestCase):
                 StateMachine state_machine_;
                 int event_group_ = 0, clock_timer_handle_ = 0;
                 bool assets_version_checked_ = false;
+                MusicPlayMode music_mode_ = MusicPlayMode::kSequential;
+                int music_position_ms_ = 0;
+                static MusicPlayMode LoadPersistedMusicMode() { return MusicPlayMode::kSequential; }
                 void Initialize();
                 void CheckAssetsVersion();
                 void SetDeviceState(DeviceState) {}

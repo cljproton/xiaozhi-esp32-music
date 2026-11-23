@@ -5,6 +5,8 @@
 #include "board.h"
 #include "cjson_utils.h"
 #include "display.h"
+#include "display/lvgl_display/lvgl_image.h"
+#include "display/lvgl_display/jpg/jpeg_to_image.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
 #include "playback_scheduler.h"
@@ -12,12 +14,14 @@
 #include "radio/radio_source.h"
 #endif
 #include "settings.h"
+#include "standby/standby_storage.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_netif_sntp.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <algorithm>
@@ -185,6 +189,23 @@ void Application::Initialize() {
 
     // Start the clock timer to update the status bar
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
+
+    // Load standby background image from NVS if configured
+    if (standby::HasBackgroundImage()) {
+        std::string jpeg;
+        if (standby::LoadBackgroundImage(jpeg)) {
+            uint8_t* out = nullptr;
+            size_t out_len = 0, w = 0, h = 0, stride = 0;
+            if (jpeg_to_image_fit(reinterpret_cast<const uint8_t*>(jpeg.data()), jpeg.size(), 292, 240,
+                                  &out, &out_len, &w, &h, &stride) == ESP_OK) {
+                display->SetStandbyImage(std::make_unique<LvglAllocatedImage>(
+                    out, out_len, w, h, stride, LV_COLOR_FORMAT_RGB565));
+                ESP_LOGI(TAG, "Standby background loaded from NVS (%ux%u)", (unsigned)w, (unsigned)h);
+            } else {
+                ESP_LOGW(TAG, "Failed to decode standby background");
+            }
+        }
+    }
 
     // Add MCP common tools (only once during initialization)
     auto& mcp_server = McpServer::GetInstance();
@@ -436,6 +457,17 @@ void Application::HandleNetworkConnectedEvent() {
             "activation", 4096 * 2, this, 2, &activation_task_handle_);
     }
 
+    // Initialize SNTP for accurate time (needed for daily shutdown & weather)
+    // Moved here from NetworkEvent::Connected callback (lwip mbox not ready in callback)
+    static bool sntp_started = false;
+    if (!sntp_started) {
+        sntp_started = true;
+        esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(2,
+                                                                               ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
+        esp_netif_sntp_init(&sntp_config);
+        ESP_LOGI(TAG, "SNTP initialized");
+    }
+
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
@@ -509,7 +541,7 @@ void Application::HandleActivationDoneEvent() {
     // Release OTA object after activation is complete
     ota_.reset();
     auto& board = Board::GetInstance();
-    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    board.SetPowerSaveLevel(PowerSaveLevel::BALANCED);
 
     if (!has_error) {
         Schedule([this]() {
@@ -2309,6 +2341,11 @@ bool Application::CanEnterSleepMode() {
     }
 
     if (!audio_service_.IsIdle()) {
+        return false;
+    }
+
+    // 音乐/电台还在播放时禁止进入低功耗待机
+    if (IsRadioPlaying()) {
         return false;
     }
 

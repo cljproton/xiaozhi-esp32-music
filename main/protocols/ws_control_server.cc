@@ -2,6 +2,7 @@
 #include "handlers/auth_api_handler.h"
 #include "handlers/music_api_handler.h"
 #include "handlers/system_api_handler.h"
+#include "handlers/config_api_handler.h"
 #include "application.h"
 #if CONFIG_USE_RADIO
 #include "radio/radio_api_handler.h"
@@ -55,6 +56,7 @@ WebSocketControlServer::WebSocketControlServer(const WebUIProvider& provider)
     AuthApiHandler::RegisterHandlers(registry_);
     MusicApiHandler::RegisterHandlers(registry_);
     SystemApiHandler::RegisterHandlers(registry_);
+    config_api::RegisterHandlers(registry_);
 #if CONFIG_USE_RADIO
     radio::RadioApiHandler::RegisterHandlers(registry_,
                                              Application::GetInstance().GetRadioSource());

@@ -17,7 +17,11 @@
                 "CONFIG_ESP_WIFI_TX_BA_WIN=32",
                 "CONFIG_LWIP_TCP_WND_DEFAULT=16384",
                 "CONFIG_LWIP_TCP_SACK_OUT=y",
-                "CONFIG_LWIP_TCP_RECVMBOX_SIZE=16"
+                "CONFIG_LWIP_TCP_RECVMBOX_SIZE=16",
+                "CONFIG_LV_FONT_MONTSERRAT_48=y",
+                "CONFIG_LWIP_SNTP=y",
+                "CONFIG_LWIP_SNTP_MAX_SERVERS=2",
+                "CONFIG_COMPILER_DISABLE_GCC12_WARNINGS=y"
             ]
         }
     ]

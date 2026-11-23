@@ -32,6 +32,8 @@
 #include "radio/radio_api_handler.h"
 #include "radio/radio_source.h"
 #endif
+#include "standby/standby_storage.h"
+#include "weather/weather_service.h"
 
 #define TAG "MCP"
 
@@ -93,6 +95,73 @@ void McpServer::AddCommonTools() {
                     return true;
                 });
     }
+
+    // Sleep mode tools
+    AddTool("self.sleep.get_status",
+            "Get the current sleep mode configuration including enabled state, daily shutdown time, and idle shutdown minutes.",
+            PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                Settings settings("wifi", false);
+                bool sleep_mode = settings.GetBool("sleep_mode", true);
+                int sleep_off_min = settings.GetInt("sleep_off_min", 0);  // 0 = disabled (default)
+                int sleep_off_at = settings.GetInt("sleep_off_at", -1);  // minutes from midnight
+                size_t free_kb = standby::GetNvsFreeBytes() / 1024;
+                
+                cJSON* json = cJSON_CreateObject();
+                cJSON_AddBoolToObject(json, "sleep_mode", sleep_mode);
+                cJSON_AddNumberToObject(json, "sleep_off_min", sleep_off_min);
+                cJSON_AddNumberToObject(json, "sleep_off_at", sleep_off_at);
+                cJSON_AddNumberToObject(json, "nvs_free_kb", static_cast<int>(free_kb));
+                cJSON_AddBoolToObject(json, "has_bg_image", standby::HasBackgroundImage());
+                cJSON_AddBoolToObject(json, "has_bg_url", standby::HasBackgroundUrl());
+                if (standby::HasBackgroundUrl()) {
+                    cJSON_AddStringToObject(json, "bg_url", standby::GetBackgroundUrl().c_str());
+                }
+                Settings wns("weather", false);
+                std::string city = wns.GetString("city", "");
+                cJSON_AddStringToObject(json, "weather_city", city.c_str());
+                return json;
+            });
+
+    AddTool("self.sleep.configure",
+            "Configure sleep mode with all three settings at once. "
+            "Call self.sleep.get_status first to see current values, then call this with the complete desired configuration. "
+            "Parameters: enabled (bool), daily_shutdown (string HH:MM or empty to disable), idle_minutes (int 0-1440, 0=disabled).",
+            PropertyList({
+                Property("enabled", kPropertyTypeBoolean),
+                Property("daily_shutdown", kPropertyTypeString, ""),
+                Property("idle_minutes", kPropertyTypeInteger, 0, 0, 1440)
+            }),
+            [](const PropertyList& properties) -> ReturnValue {
+                bool enabled = properties["enabled"].value<bool>();
+                std::string daily = properties["daily_shutdown"].value<std::string>();
+                int idle = properties["idle_minutes"].value<int>();
+                
+                Settings settings("wifi", true);
+                settings.SetBool("sleep_mode", enabled);
+                
+                if (!daily.empty()) {
+                    int h = 0, m = 0;
+                    if (sscanf(daily.c_str(), "%d:%d", &h, &m) != 2 || h < 0 || h > 23 || m < 0 || m > 59) {
+                        return std::string("daily_shutdown invalid HH:MM");
+                    }
+                    settings.SetInt("sleep_off_at", h * 60 + m);
+                } else {
+                    settings.SetInt("sleep_off_at", -1);
+                }
+                settings.SetInt("sleep_off_min", idle);
+                return true;
+            });
+
+    // Weather city tool
+    AddTool("self.standby.set_weather_city",
+            "Set city name for standby weather display. Empty string = auto by IP.",
+            PropertyList({Property("city", kPropertyTypeString, "")}),
+            [](const PropertyList& properties) -> ReturnValue {
+                std::string city = properties["city"].value<std::string>();
+                weather::SetCity(city);
+                return true;
+            });
 
 #ifdef HAVE_LVGL
     auto display = board.GetDisplay();
@@ -175,26 +244,23 @@ void McpServer::AddCommonTools() {
     AddTool("self.music.play_all",
             "Play all music from a remote WebDAV source (远程播放/网盘音乐). "
             "If `source` is omitted, the source selected on the device web page (saved on the device) is used. "
+            "If `index` >= 0, plays that saved source by index (use self.music.sources to see indices). "
             "By default the saved playback mode (sequential/shuffle) is used; set `random` to true to switch to shuffle. "
             "`source` is a JSON object: "
             "{\"type\":\"webdav\",\"base_url\":\"...\",\"username\":\"...\",\"password\":\"...\",\"path\":\"...\"} "
             "for a WebDAV source.",
-            PropertyList({Property("source", kPropertyTypeString, ""),
-                          Property("random", kPropertyTypeBoolean, false)}),
+            PropertyList({
+                Property("source", kPropertyTypeString, ""),
+                Property("random", kPropertyTypeBoolean, false),
+                Property("index", kPropertyTypeInteger, -1)
+            }),
             [this](const PropertyList& properties) -> ToolResult {
+                int index = properties["index"].value<int>();
+                if (index >= 0) {
+                    return PlayMusicSourceAt(index, properties["random"].value<bool>());
+                }
                 return PlayMusicAll(properties["source"].value<std::string>(),
                                     properties["random"].value<bool>());
-            });
-
-    AddTool("self.music.count",
-            "Count the number of music files in a WebDAV source.",
-            PropertyList({Property("source", kPropertyTypeString)}),
-            [this](const PropertyList& properties) -> ToolResult {
-                auto tracks = ListMusicTracks(properties["source"].value<std::string>());
-                if (!tracks) {
-                    return std::unexpected(tracks.error());
-                }
-                return static_cast<int>(tracks->size());
             });
 
     AddTool("self.music.next", "Skip to the next track in the current playlist.", PropertyList(),
@@ -226,16 +292,6 @@ void McpServer::AddCommonTools() {
                          status.title.c_str(), status.track_index + 1, status.total,
                          status.mode == Application::MusicPlayMode::kShuffle ? "shuffle" : "sequential");
                 return std::string(buf);
-            });
-
-    AddTool("self.music.play_source",
-            "播放远程音源（WebDAV/网盘/网络音乐）中的全部音乐。`index` 是已配置音源的序号（从 0 开始，"
-            "先用 self.music.sources 查看有哪些音源）。`random` 为 true 时随机播放。",
-            PropertyList({Property("index", kPropertyTypeInteger),
-                          Property("random", kPropertyTypeBoolean, false)}),
-            [this](const PropertyList& properties) -> ToolResult {
-                return PlayMusicSourceAt(properties["index"].value<int>(),
-                                         properties["random"].value<bool>());
             });
 
     AddTool("self.music.mode",
@@ -289,17 +345,6 @@ void McpServer::AddCommonTools() {
                 cmd->type = PlaybackCommandType::SEEK;
                 cmd->priority = PlaybackPriority::MUSIC;
                 cmd->seek_ms = properties["time_ms"].value<int>();
-                return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
-            });
-
-    AddTool("self.music.volume", "设置播放音量 (0-100)。", PropertyList(
-        {Property("volume", kPropertyTypeInteger, 0, 100)}),
-            [](const PropertyList& properties) -> ToolResult {
-                auto& scheduler = Application::GetInstance().GetPlaybackScheduler();
-                auto cmd = std::make_unique<PlaybackCommand>();
-                cmd->type = PlaybackCommandType::VOLUME;
-                cmd->priority = PlaybackPriority::MUSIC;
-                cmd->volume = properties["volume"].value<int>();
                 return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 5000));
             });
 
@@ -370,33 +415,31 @@ void McpServer::AddCommonTools() {
             });
 
             AddTool("radio.play",
-                    "按名称播放已保存的网络电台（模糊匹配）。电台在设备网页端管理。",
-                    PropertyList({Property("name", kPropertyTypeString)}),
+                    "按名称播放已保存的网络电台（模糊匹配）。`name` 可选：为空或省略时播放第一个已保存电台。电台在设备网页端管理。",
+                    PropertyList({Property("name", kPropertyTypeString, "")}),
                     [radio_source](const PropertyList& properties) -> ToolResult {
                         std::string name = properties["name"].value<std::string>();
-                        auto matches = radio_source->GetStationManager().FindByName(name);
-                        if (matches.empty()) {
+                        auto stations = radio_source->GetStationManager().GetAllStations();
+                        if (stations.empty()) {
                             std::string page = radio::RadioApiHandler::GetWebPageUrl();
                             std::string hint = page.empty()
                                 ? "请先让设备联网，再用 radio.web_guide 获取网页地址。"
                                 : "请在浏览器打开 " + page + " 添加电台。";
-                            return std::unexpected("没有匹配的电台。" + hint);
+                            return std::unexpected("设备上还没有保存电台。" + hint);
+                        }
+                        const radio::StationManager::Station* target = nullptr;
+                        if (!name.empty()) {
+                            auto matches = radio_source->GetStationManager().FindByName(name);
+                            if (matches.empty()) {
+                                return std::unexpected("没有匹配的电台：" + name);
+                            }
+                            target = &matches.front();
+                        } else {
+                            target = &stations.front();
                         }
                         radio_source->SetVolume(100);
-                        Application::GetInstance().StartRadio(matches.front().url, true);
-                        return "正在播放：" + matches.front().name;
-                    });
-
-            AddTool("radio.play_default",
-                    "播放设备已保存的第一个电台；用户只说“放电台”而没有指定台名时使用。",
-                    PropertyList(),
-                    [radio_source](const PropertyList&) -> ToolResult {
-                        auto stations = radio_source->GetStationManager().GetAllStations();
-                        if (stations.empty()) {
-                            return std::unexpected("设备上还没有保存电台，请用 radio.web_guide 查看配置网页。");
-                        }
-                        Application::GetInstance().StartRadio(stations.front().url, true);
-                        return "正在播放默认电台：" + stations.front().name;
+                        Application::GetInstance().StartRadio(target->url, true);
+                        return "正在播放：" + target->name;
                     });
 
             AddTool("radio.stop", "停止当前电台。", PropertyList(),
@@ -419,18 +462,6 @@ void McpServer::AddCommonTools() {
                         if (!station) return std::string("没有上一个电台");
                         Application::GetInstance().StartRadio(station->url, true);
                         return "正在播放：" + station->name;
-                    });
-
-            AddTool("radio.volume", "设置电台播放音量 (0-100)。",
-                    PropertyList({Property("volume", kPropertyTypeInteger, 0, 100)}),
-                    [](const PropertyList& properties) -> ToolResult {
-                        int volume = properties["volume"].value<int>();
-                        auto codec = Board::GetInstance().GetAudioCodec();
-                        if (codec == nullptr) {
-                            return std::unexpected("无法设置设备音量");
-                        }
-                        codec->SetOutputVolume(volume);
-                        return "设备音量已设为 " + std::to_string(volume);
                     });
 
             AddTool("radio.web_guide",
@@ -457,20 +488,9 @@ void McpServer::AddCommonTools() {
                         int idx = 1;
                         for (const auto& s : stations) {
                             out += " " + std::to_string(idx++) + ". " + s.name + " - " + s.url +
-                                   " (增益 " + std::to_string(s.gain) + "%)";
+                                   " [" + s.genre + "/" + s.country + "] (增益 " + std::to_string(s.gain) + "%)";
                         }
                         return out;
-                    });
-
-            AddTool("radio.stations.get", "按名称查看某个已保存电台的详情。",
-                    PropertyList({Property("name", kPropertyTypeString)}),
-                    [radio_source](const PropertyList& properties) -> ToolResult {
-                        auto matches = radio_source->GetStationManager().FindByName(
-                            properties["name"].value<std::string>());
-                        if (matches.empty()) return std::string("没有匹配的电台");
-                        const auto& s = matches.front();
-                        return "名称：" + s.name + "\nURL：" + s.url + "\n分类：" + s.genre +
-                               "\n国家：" + s.country + "\n增益：" + std::to_string(s.gain) + "%";
                     });
 
             AddTool("radio.stations.delete",

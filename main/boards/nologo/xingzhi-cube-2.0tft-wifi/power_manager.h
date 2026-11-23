@@ -283,6 +283,13 @@ public:
         is_playing_ = playing;
     }
 
+    // Power off the device (pull Power_Control low)
+    void PowerOff() {
+        ESP_LOGI("PowerManager", "Power off requested");
+        gpio_set_level(DISPLAY_RES, 0);
+        gpio_set_level(Power_Control, 0);
+    }
+
     ~PowerManager() {
         if (timer_handle_) {
             esp_timer_stop(timer_handle_);

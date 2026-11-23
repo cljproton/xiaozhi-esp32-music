@@ -98,7 +98,8 @@ std::vector<StationManager::Station> StationManager::FindByName(const std::strin
     return matches;
 }
 
-bool StationManager::AddStation(const Station& station) {    std::lock_guard<std::mutex> lock(mutex_);
+bool StationManager::AddStation(const Station& station) {
+    std::lock_guard<std::mutex> lock(mutex_);
 
     if (stations_.size() >= kMaxStations) {
         ESP_LOGW(TAG, "Station list full (%zu max)", kMaxStations);
@@ -116,17 +117,28 @@ bool StationManager::AddStation(const Station& station) {    std::lock_guard<std
     Station new_station = station;
     if (new_station.id.empty()) new_station.id = GenerateId();
     
-    stations_.push_back(new_station);
-    return SaveAllStationsToNvs();
+    // Try save first, only commit to memory on success
+    std::vector<Station> new_list = stations_;
+    new_list.push_back(new_station);
+    if (!SaveAllStationsToNvs(new_list)) {
+        return false;
+    }
+    stations_ = std::move(new_list);
+    return true;
 }
 
 bool StationManager::UpdateStation(const Station& station) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    for (auto& s : stations_) {
-        if (s.id == station.id) {
-            s = station;
-            return SaveAllStationsToNvs();
+    for (size_t i = 0; i < stations_.size(); i++) {
+        if (stations_[i].id == station.id) {
+            std::vector<Station> new_list = stations_;
+            new_list[i] = station;
+            if (!SaveAllStationsToNvs(new_list)) {
+                return false;
+            }
+            stations_ = std::move(new_list);
+            return true;
         }
     }
     return false;
@@ -138,8 +150,12 @@ bool StationManager::RemoveStation(const std::string& id) {
     auto it = std::remove_if(stations_.begin(), stations_.end(),
                              [&id](const Station& s) { return s.id == id; });
     if (it != stations_.end()) {
-        stations_.erase(it, stations_.end());
-        return SaveAllStationsToNvs();
+        std::vector<Station> new_list(stations_.begin(), it);
+        if (!SaveAllStationsToNvs(new_list)) {
+            return false;
+        }
+        stations_ = std::move(new_list);
+        return true;
     }
     return false;
 }
@@ -162,8 +178,13 @@ bool StationManager::MoveStation(int index, const char* dir) {
         // Boundary no-op (top station asked to move up / last asked to move down) is not an error.
         return true;
     }
-    std::swap(stations_[from], stations_[to]);
-    return SaveAllStationsToNvs();
+    std::vector<Station> new_list = stations_;
+    std::swap(new_list[from], new_list[to]);
+    if (!SaveAllStationsToNvs(new_list)) {
+        return false;
+    }
+    stations_ = std::move(new_list);
+    return true;
 }
 
 void StationManager::RecordPlay(const std::string& id_or_url) {
@@ -292,21 +313,22 @@ bool StationManager::LoadStationsFromNvs() {
     return !stations_.empty();
 }
 
-bool StationManager::SaveAllStationsToNvs() {
+// Internal: save a given station list to NVS (used for atomic updates)
+bool StationManager::SaveAllStationsToNvs(const std::vector<Station>& list) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(nvs_namespace_.c_str(), NVS_READWRITE, &handle);
     if (err != ESP_OK) return false;
     
     // Save count
-    err = nvs_set_u32(handle, kKeyCount, stations_.size());
+    err = nvs_set_u32(handle, kKeyCount, list.size());
     if (err != ESP_OK) {
         nvs_close(handle);
         return false;
     }
     
     // Save each station
-    for (size_t i = 0; i < stations_.size(); i++) {
-        if (!SaveStationToNvs(stations_[i], static_cast<int>(i))) {
+    for (size_t i = 0; i < list.size(); i++) {
+        if (!SaveStationToNvs(list[i], static_cast<int>(i))) {
             nvs_close(handle);
             return false;
         }
@@ -314,7 +336,7 @@ bool StationManager::SaveAllStationsToNvs() {
     
     // Remove old entries if any
     char key[32];
-    for (size_t i = stations_.size(); i < stations_.size() + 10; i++) {
+    for (size_t i = list.size(); i < list.size() + 10; i++) {
         snprintf(key, sizeof(key), "%s%d", kKeyPrefix, static_cast<int>(i));
         nvs_erase_key(handle, key);
     }
@@ -322,6 +344,11 @@ bool StationManager::SaveAllStationsToNvs() {
     err = nvs_commit(handle);
     nvs_close(handle);
     return err == ESP_OK;
+}
+
+// Public: save current stations_ to NVS
+bool StationManager::SaveAllStationsToNvs() {
+    return SaveAllStationsToNvs(stations_);
 }
 
 std::string StationManager::GenerateId() const {

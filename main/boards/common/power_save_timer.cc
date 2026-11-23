@@ -11,7 +11,8 @@ PowerSaveTimer::PowerSaveTimer(int cpu_max_freq, int seconds_to_sleep, int secon
       default_seconds_to_sleep_(seconds_to_sleep),
       default_seconds_to_shutdown_(seconds_to_shutdown),
       seconds_to_sleep_(seconds_to_sleep),
-      seconds_to_shutdown_(seconds_to_shutdown) {
+      seconds_to_shutdown_(seconds_to_shutdown),
+      daily_shutdown_at_min_(-1) {
     esp_timer_create_args_t timer_args = {
         .callback =
             [](void* arg) {
@@ -59,6 +60,7 @@ void PowerSaveTimer::ApplySettings() {
     const bool sleep_enabled = settings.GetBool("sleep_mode", true);
     int eff_sleep = -1;
     int eff_shutdown = -1;
+    int eff_daily_shutdown = -1;
     if (sleep_enabled) {
         auto seconds_from_minutes = [](int minutes, int fallback) {
             // Match the portal's contract and validate before multiplying.
@@ -72,17 +74,36 @@ void PowerSaveTimer::ApplySettings() {
             seconds_from_minutes(settings.GetInt("sleep_dim_min", -1), default_seconds_to_sleep_);
         eff_shutdown = seconds_from_minutes(settings.GetInt("sleep_off_min", -1),
                                             default_seconds_to_shutdown_);
+        // Daily shutdown at specific time (minutes from midnight, -1 = disabled)
+        int daily_at = settings.GetInt("sleep_off_at", -1);
+        if (daily_at >= 0 && daily_at <= 1439) {
+            eff_daily_shutdown = daily_at;
+        }
     }
-    if (eff_sleep != seconds_to_sleep_ || eff_shutdown != seconds_to_shutdown_) {
-        ESP_LOGI(TAG, "Sleep timers updated: sleep=%d s, shutdown=%d s", eff_sleep, eff_shutdown);
+    bool changed = false;
+    if (eff_sleep != seconds_to_sleep_ || eff_shutdown != seconds_to_shutdown_ ||
+        eff_daily_shutdown != daily_shutdown_at_min_) {
+        ESP_LOGI(TAG, "Sleep timers updated: sleep=%d s, shutdown=%d s, daily_off_at=%d min",
+                 eff_sleep, eff_shutdown, eff_daily_shutdown);
         seconds_to_sleep_ = eff_sleep;
         seconds_to_shutdown_ = eff_shutdown;
+        daily_shutdown_at_min_ = eff_daily_shutdown;
+        changed = true;
     }
     if (!sleep_enabled) {
         WakeUp();
     } else if (seconds_to_sleep_ == -1) {
         // Disabling dimming restores the screen without delaying an active shutdown deadline.
         ExitSleepMode();
+    }
+    // Reset daily trigger flag at midnight (when day rolls over)
+    if (changed || daily_shutdown_at_min_ != -1) {
+        time_t now = time(nullptr);
+        struct tm* tm_now = localtime(&now);
+        int current_min = tm_now->tm_hour * 60 + tm_now->tm_min;
+        if (daily_shutdown_triggered_ && current_min < daily_shutdown_at_min_) {
+            daily_shutdown_triggered_ = false;
+        }
     }
 }
 
@@ -102,7 +123,7 @@ void PowerSaveTimer::PowerSaveCheck() {
     // Pick up sleep timer changes saved through the web config without a reboot.
     ApplySettings();
 
-    if (seconds_to_sleep_ == -1 && seconds_to_shutdown_ == -1) {
+    if (seconds_to_sleep_ == -1 && seconds_to_shutdown_ == -1 && daily_shutdown_at_min_ == -1) {
         // Continue polling settings, but enabling a step must start a fresh idle cycle.
         ticks_ = 0;
         shutdown_requested_ = false;
@@ -156,6 +177,18 @@ void PowerSaveTimer::PowerSaveCheck() {
         !shutdown_requested_) {
         shutdown_requested_ = true;
         on_shutdown_request_();
+    }
+    // Daily shutdown at specific time (regardless of idle state)
+    if (daily_shutdown_at_min_ != -1 && on_shutdown_request_ && !daily_shutdown_triggered_) {
+        time_t now = time(nullptr);
+        struct tm* tm_now = localtime(&now);
+        int current_min = tm_now->tm_hour * 60 + tm_now->tm_min;
+        if (current_min >= daily_shutdown_at_min_) {
+            ESP_LOGI(TAG, "Daily shutdown time reached (%d:%02d), triggering shutdown",
+                     daily_shutdown_at_min_ / 60, daily_shutdown_at_min_ % 60);
+            daily_shutdown_triggered_ = true;
+            on_shutdown_request_();
+        }
     }
 }
 

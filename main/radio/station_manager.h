@@ -29,9 +29,9 @@ public:
     StationManager();
     ~StationManager();
 
-    // NVS holds 48K; worst-case station JSON (~450 B) takes ~16 NVS slots,
-    // and one page must stay spare for compaction. 80 fits with margin.
-    static constexpr size_t kMaxStations = 80;
+    // NVS holds 48K; reserve ~16K for standby background image + WiFi/weather,
+    // one page for compaction. 30 stations (~15K) fits with comfortable margin.
+    static constexpr size_t kMaxStations = 30;
 
     // Initialize NVS storage. The list starts empty; stations are managed
     // from the device's web page (see radio_web_server.cc).
@@ -85,6 +85,8 @@ private:
     
     // Save all stations to NVS
     bool SaveAllStationsToNvs();
+    // Internal: save a given station list to NVS (used for atomic updates)
+    bool SaveAllStationsToNvs(const std::vector<Station>& list);
     
     // Generate unique ID
     std::string GenerateId() const;

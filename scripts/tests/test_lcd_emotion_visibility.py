@@ -33,6 +33,8 @@ class LcdEmotionVisibilityTests(unittest.TestCase):
 #define ESP_LOGW(...)
 #define ESP_LOGI(...)
 #define ESP_LOGE(...)
+#define ESP_LOGD(...)
+#define TAG "LcdDisplay"
 constexpr int LV_OBJ_FLAG_HIDDEN = 1;
 struct lv_font_t {};
 struct lv_obj_t {
@@ -107,6 +109,7 @@ class LcdDisplay {
 public:
     bool setup_ui_called_ = true;
     bool emotion_uses_image_ = false;
+    bool standby_enabled_ = false;
     LvglTheme theme;
     LvglTheme* current_theme_ = &theme;
     lv_obj_t content, label, image;

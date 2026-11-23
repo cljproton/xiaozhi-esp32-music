@@ -34,8 +34,20 @@ protected:
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
 
+    // Standby mode
+    bool standby_enabled_ = false;
+    lv_obj_t* standby_container_ = nullptr;
+    lv_obj_t* standby_bg_image_ = nullptr;
+    lv_obj_t* standby_time_label_ = nullptr;
+    lv_obj_t* standby_weather_label_ = nullptr;
+    std::unique_ptr<LvglImage> standby_bg_cached_ = nullptr;
+    std::string pending_standby_weather_;
+
     void InitializeLcdThemes();
     void ShowEmotion();
+    void SetupStandbyUI();
+    void UpdateStandbyTime();
+    void UpdateStandbyWeather();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -57,6 +69,12 @@ public:
 
     // Set whether to hide chat messages/subtitles
     virtual void SetHideSubtitle(bool hide) override;
+
+    // Standby mode
+    virtual void SetStandby(bool enable) override;
+    virtual void SetStandbyImage(std::unique_ptr<LvglImage> image) override;
+    virtual void SetStandbyWeather(const char* weather) override;
+    virtual void UpdateStatusBar(bool update_all = false) override;
 };
 
 // SPI LCD display

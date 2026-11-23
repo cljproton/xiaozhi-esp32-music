@@ -39,8 +39,10 @@ private:
     int default_seconds_to_shutdown_;
     int seconds_to_sleep_;
     int seconds_to_shutdown_;
+    int daily_shutdown_at_min_;   // minutes from midnight, -1 = disabled
 
     std::function<void()> on_enter_sleep_mode_;
     std::function<void()> on_exit_sleep_mode_;
     std::function<void()> on_shutdown_request_;
+    bool daily_shutdown_triggered_ = false;  // track if today's shutdown already fired
 };
