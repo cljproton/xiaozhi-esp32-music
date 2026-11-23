@@ -1229,6 +1229,7 @@ void LcdDisplay::SetStandby(bool enable) {
         if (status_label_ != nullptr) lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
         if (notification_label_ != nullptr) lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
         // Keep top_bar_ (WiFi/battery icons) visible
+        lv_obj_invalidate(standby_container_);
         UpdateStandbyTime();
         UpdateStandbyWeather();
         ESP_LOGI(TAG, "Standby mode enabled");
@@ -1266,6 +1267,7 @@ void LcdDisplay::SetStandbyImage(std::unique_ptr<LvglImage> image) {
     auto img_dsc = standby_bg_cached_->image_dsc();
     lv_image_set_src(standby_bg_image_, img_dsc);
     lv_obj_remove_flag(standby_bg_image_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(standby_bg_image_);
     // Hide solid background
     lv_obj_set_style_bg_opa(standby_container_, LV_OPA_TRANSP, 0);
     ESP_LOGI(TAG, "Standby background image set (%dx%d)", img_dsc->header.w, img_dsc->header.h);
