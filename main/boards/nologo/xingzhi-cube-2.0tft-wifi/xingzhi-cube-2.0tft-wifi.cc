@@ -88,14 +88,14 @@ private:
     void InitializePowerSaveTimer() {
         power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
         power_save_timer_->OnEnterSleepMode([this]() {
-            ESP_LOGI(TAG, "Enabling standby mode");
+            ESP_LOGI(TAG, "Enabling sleep mode");
             display_->SetChatMessage("system", "");
-            display_->SetStandby(true);
+            display_->SetEmotion("sleepy");
             GetBacklight()->SetBrightness(1);
         });
         power_save_timer_->OnExitSleepMode([this]() {
             display_->SetChatMessage("system", "");
-            display_->SetStandby(false);
+            display_->SetEmotion("neutral");
             GetBacklight()->RestoreBrightness();
         });
         power_save_timer_->OnShutdownRequest([this]() {

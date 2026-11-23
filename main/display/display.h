@@ -91,12 +91,6 @@ public:
         return false;
     }
 
-    // Standby mode: shows time + weather + custom background instead of AI emotion
-    // Only takes effect when background image or weather is configured.
-    virtual void SetStandby(bool enable) { (void)enable; }
-    virtual void SetStandbyImage(std::unique_ptr<LvglImage> image) { (void)image; }
-    virtual void SetStandbyWeather(const char* weather) { (void)weather; }
-
     inline int width() const { return width_; }
     inline int height() const { return height_; }
     inline bool IsSetupUICalled() const { return setup_ui_called_; }

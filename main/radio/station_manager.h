@@ -29,8 +29,7 @@ public:
     StationManager();
     ~StationManager();
 
-    // NVS holds 48K; reserve ~16K for standby background image + WiFi/weather,
-    // one page for compaction. 30 stations (~15K) fits with comfortable margin.
+    // NVS holds 48K; reserve one page for compaction. 30 stations (~15K) fits.
     static constexpr size_t kMaxStations = 30;
 
     // Initialize NVS storage. The list starts empty; stations are managed

@@ -131,11 +131,11 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
   <div class="cards">
     <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music">音乐播放器</h2><small id="d-music">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
     <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio">网络电台</h2><small id="d-radio">搜索、收藏和播放网络电台</small></a>
-    <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、待机背景/天气</small></a>
+    <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、天气</small></a>
   </div>
 </div>
 <script>
-const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',config:'设备配置',dconfig:'修改密码、睡眠模式、待机背景/天气'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',config:'Settings',dconfig:'Password, sleep mode, standby bg/weather'}};
+const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',config:'设备配置',dconfig:'修改密码、睡眠模式、天气'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',config:'Settings',dconfig:'Password, sleep mode, weather'}};
 const lang=(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en';const T=I18N[lang];
 for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-config','config'],['d-config','dconfig']]){const el=document.getElementById(id);if(el)el.textContent=T[key];}
 const $=id=>document.getElementById(id);

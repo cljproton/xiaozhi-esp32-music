@@ -368,19 +368,6 @@ LcdDisplay::~LcdDisplay() {
     if (container_ != nullptr) {
         lv_obj_del(container_);
     }
-    // Standby cleanup
-    if (standby_container_ != nullptr) {
-        lv_obj_del(standby_container_);
-    }
-    if (standby_bg_image_ != nullptr) {
-        lv_obj_del(standby_bg_image_);
-    }
-    if (standby_time_label_ != nullptr) {
-        lv_obj_del(standby_time_label_);
-    }
-    if (standby_weather_label_ != nullptr) {
-        lv_obj_del(standby_weather_label_);
-    }
     if (display_ != nullptr) {
         lv_display_delete(display_);
     }
@@ -1147,146 +1134,6 @@ void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
     ESP_ERROR_CHECK(esp_timer_start_once(preview_timer_, PREVIEW_IMAGE_DURATION_MS * 1000));
 }
 
-void LcdDisplay::SetupStandbyUI() {
-    if (standby_container_ != nullptr) return;  // Already created
-    DisplayLockGuard lock(this);
-    auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-    auto screen = lv_screen_active();
-
-    // Standby container - full screen, bottom layer
-    standby_container_ = lv_obj_create(screen);
-    lv_obj_set_size(standby_container_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_style_radius(standby_container_, 0, 0);
-    lv_obj_set_style_pad_all(standby_container_, 0, 0);
-    lv_obj_set_style_border_width(standby_container_, 0, 0);
-    lv_obj_set_style_bg_color(standby_container_, lvgl_theme->background_color(), 0);
-    lv_obj_set_style_bg_opa(standby_container_, LV_OPA_COVER, 0);
-    lv_obj_align(standby_container_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
-
-    // Background image (full screen cover)
-    standby_bg_image_ = lv_img_create(standby_container_);
-    lv_obj_set_size(standby_bg_image_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_align(standby_bg_image_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(standby_bg_image_, LV_OBJ_FLAG_HIDDEN);
-
-    // Time label - large font
-    standby_time_label_ = lv_label_create(standby_container_);
-    lv_obj_set_style_text_color(standby_time_label_, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(standby_time_label_, LV_OPA_COVER, 0);
-    // Use large font if available (MONTSERRAT_48), fallback to large_icon_font
-    const lv_font_t* time_font = lvgl_theme->large_icon_font()->font();
-    lv_obj_set_style_text_font(standby_time_label_, time_font, 0);
-    lv_label_set_text(standby_time_label_, "00:00");
-    lv_obj_align(standby_time_label_, LV_ALIGN_CENTER, 0, -40);
-
-    // Weather label - smaller font
-    standby_weather_label_ = lv_label_create(standby_container_);
-    lv_obj_set_style_text_color(standby_weather_label_, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(standby_weather_label_, LV_OPA_COVER, 0);
-    const lv_font_t* weather_font = lvgl_theme->text_font()->font();
-    lv_obj_set_style_text_font(standby_weather_label_, weather_font, 0);
-    lv_label_set_text(standby_weather_label_, "");
-    lv_obj_align(standby_weather_label_, LV_ALIGN_CENTER, 0, 20);
-}
-
-void LcdDisplay::UpdateStandbyTime() {
-    if (!standby_enabled_ || standby_time_label_ == nullptr) return;
-    DisplayLockGuard lock(this);
-    time_t now = time(nullptr);
-    struct tm* tm_now = localtime(&now);
-    char time_str[16];
-    strftime(time_str, sizeof(time_str), "%H:%M", tm_now);
-    lv_label_set_text(standby_time_label_, time_str);
-}
-
-void LcdDisplay::UpdateStandbyWeather() {
-    if (!standby_enabled_ || standby_weather_label_ == nullptr) return;
-    DisplayLockGuard lock(this);
-    if (!pending_standby_weather_.empty()) {
-        lv_label_set_text(standby_weather_label_, pending_standby_weather_.c_str());
-        pending_standby_weather_.clear();
-    }
-}
-
-void LcdDisplay::SetStandby(bool enable) {
-    DisplayLockGuard lock(this);
-    if (enable == standby_enabled_) return;
-    standby_enabled_ = enable;
-
-    if (enable) {
-        SetupStandbyUI();
-        // Show standby layer, hide normal UI elements
-        if (standby_container_ != nullptr) {
-            lv_obj_remove_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_move_background(standby_container_);
-        }
-        // Hide emoji/emotion and chat
-        if (emoji_box_ != nullptr) lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
-        if (gif_controller_) gif_controller_->Stop();
-        if (chat_message_label_ != nullptr) lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
-        if (bottom_bar_ != nullptr) lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-        if (status_label_ != nullptr) lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
-        if (notification_label_ != nullptr) lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
-        // Keep top_bar_ (WiFi/battery icons) visible
-        lv_obj_invalidate(standby_container_);
-        UpdateStandbyTime();
-        UpdateStandbyWeather();
-        ESP_LOGI(TAG, "Standby mode enabled");
-    } else {
-        // Hide standby layer, restore normal UI
-        if (standby_container_ != nullptr) {
-            lv_obj_add_flag(standby_container_, LV_OBJ_FLAG_HIDDEN);
-        }
-        // Restore emoji/emotion
-        if (emoji_box_ != nullptr) lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
-        if (emotion_uses_image_ && gif_controller_ && !gif_controller_->IsPlaying()) {
-            gif_controller_->Start();
-        }
-        ShowEmotion();
-        ESP_LOGI(TAG, "Standby mode disabled");
-    }
-}
-
-void LcdDisplay::SetStandbyImage(std::unique_ptr<LvglImage> image) {
-    DisplayLockGuard lock(this);
-    SetupStandbyUI();
-
-    if (image == nullptr) {
-        if (standby_bg_image_ != nullptr) {
-            lv_obj_add_flag(standby_bg_image_, LV_OBJ_FLAG_HIDDEN);
-        }
-        standby_bg_cached_.reset();
-        // Fallback to solid background color
-        auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-        lv_obj_set_style_bg_color(standby_container_, lvgl_theme->background_color(), 0);
-        return;
-    }
-
-    standby_bg_cached_ = std::move(image);
-    auto img_dsc = standby_bg_cached_->image_dsc();
-    lv_image_set_src(standby_bg_image_, img_dsc);
-    lv_obj_remove_flag(standby_bg_image_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_invalidate(standby_bg_image_);
-    // Hide solid background
-    lv_obj_set_style_bg_opa(standby_container_, LV_OPA_TRANSP, 0);
-    ESP_LOGI(TAG, "Standby background image set (%dx%d)", img_dsc->header.w, img_dsc->header.h);
-}
-
-void LcdDisplay::SetStandbyWeather(const char* weather) {
-    if (weather == nullptr) return;
-    pending_standby_weather_ = weather;
-    if (standby_enabled_) {
-        UpdateStandbyWeather();
-    }
-}
-
-void LcdDisplay::UpdateStatusBar(bool update_all) {
-    LvglDisplay::UpdateStatusBar(update_all);
-    if (standby_enabled_) {
-        UpdateStandbyTime();
-    }
-}
 
 void LcdDisplay::SetChatMessage(const char* role, const char* content) {
     if (!setup_ui_called_) {
@@ -1352,12 +1199,6 @@ bool LcdDisplay::SetEmotion(const char* emotion) {
     if (!setup_ui_called_) {
         ESP_LOGW(TAG, "SetEmotion('%s') called before SetupUI() - emotion will not be displayed!",
                  emotion);
-    }
-    // In standby mode, don't show AI emotion (standby shows time/weather instead)
-    // But still return true to indicate the request was accepted.
-    if (standby_enabled_) {
-        ESP_LOGD(TAG, "SetEmotion('%s') ignored in standby mode", emotion);
-        return true;
     }
     if (emoji_image_ == nullptr) {
         if (setup_ui_called_) {

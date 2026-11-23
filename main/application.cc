@@ -5,8 +5,6 @@
 #include "board.h"
 #include "cjson_utils.h"
 #include "display.h"
-#include "display/lvgl_display/lvgl_image.h"
-#include "display/lvgl_display/jpg/jpeg_to_image.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
 #include "playback_scheduler.h"
@@ -14,7 +12,6 @@
 #include "radio/radio_source.h"
 #endif
 #include "settings.h"
-#include "standby/standby_storage.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
@@ -189,23 +186,6 @@ void Application::Initialize() {
 
     // Start the clock timer to update the status bar
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
-
-    // Load standby background image from NVS if configured
-    if (standby::HasBackgroundImage()) {
-        std::string jpeg;
-        if (standby::LoadBackgroundImage(jpeg)) {
-            uint8_t* out = nullptr;
-            size_t out_len = 0, w = 0, h = 0, stride = 0;
-            if (jpeg_to_image_fit(reinterpret_cast<const uint8_t*>(jpeg.data()), jpeg.size(), 292, 240,
-                                  &out, &out_len, &w, &h, &stride) == ESP_OK) {
-                display->SetStandbyImage(std::make_unique<LvglAllocatedImage>(
-                    out, out_len, w, h, stride, LV_COLOR_FORMAT_RGB565));
-                ESP_LOGI(TAG, "Standby background loaded from NVS (%ux%u)", (unsigned)w, (unsigned)h);
-            } else {
-                ESP_LOGW(TAG, "Failed to decode standby background");
-            }
-        }
-    }
 
     // Add MCP common tools (only once during initialization)
     auto& mcp_server = McpServer::GetInstance();

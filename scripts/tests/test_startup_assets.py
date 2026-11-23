@@ -76,13 +76,6 @@ class StartupAssetsTests(unittest.TestCase):
                 bool IsValid() const { return true; }
             };
             esp_err_t jpeg_to_image_fit(const void*, size_t, int, int, uint8_t**, size_t*, size_t*, size_t*, size_t*) { return ESP_OK; }
-            namespace standby {
-                bool HasBackgroundImage() { return false; }
-                bool LoadBackgroundImage(std::string& out) { out.clear(); return false; }
-                bool SaveBackgroundImage(const uint8_t*, size_t) { return true; }
-                bool ClearBackgroundImage() { return true; }
-                bool ClearBackgroundUrl() { return true; }
-            }
             enum class MusicPlayMode { kSequential, kShuffle };
             enum {
                 MAIN_EVENT_SEND_AUDIO, MAIN_EVENT_WAKE_WORD_DETECTED,
@@ -133,7 +126,6 @@ class StartupAssetsTests(unittest.TestCase):
             class Display {
             public:
                 void SetupUI() { ui_ready = true; }
-                void SetStandbyImage(std::unique_ptr<LvglImage>) {}
                 void SetChatMessage(const char*, const char*) {}
                 void SetStatus(const char*) {}
                 bool SetEmotion(const char*) { return true; }

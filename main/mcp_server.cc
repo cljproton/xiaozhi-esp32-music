@@ -32,7 +32,6 @@
 #include "radio/radio_api_handler.h"
 #include "radio/radio_source.h"
 #endif
-#include "standby/standby_storage.h"
 #include "weather/weather_service.h"
 
 #define TAG "MCP"
@@ -105,20 +104,12 @@ void McpServer::AddCommonTools() {
                 bool sleep_mode = settings.GetBool("sleep_mode", true);
                 int sleep_off_min = settings.GetInt("sleep_off_min", 0);  // 0 = disabled (default)
                 int sleep_off_at = settings.GetInt("sleep_off_at", -1);  // minutes from midnight
-                size_t free_kb = standby::GetNvsFreeBytes() / 1024;
-                
+                Settings wns("weather", false);
+                std::string city = wns.GetString("city", "");
                 cJSON* json = cJSON_CreateObject();
                 cJSON_AddBoolToObject(json, "sleep_mode", sleep_mode);
                 cJSON_AddNumberToObject(json, "sleep_off_min", sleep_off_min);
                 cJSON_AddNumberToObject(json, "sleep_off_at", sleep_off_at);
-                cJSON_AddNumberToObject(json, "nvs_free_kb", static_cast<int>(free_kb));
-                cJSON_AddBoolToObject(json, "has_bg_image", standby::HasBackgroundImage());
-                cJSON_AddBoolToObject(json, "has_bg_url", standby::HasBackgroundUrl());
-                if (standby::HasBackgroundUrl()) {
-                    cJSON_AddStringToObject(json, "bg_url", standby::GetBackgroundUrl().c_str());
-                }
-                Settings wns("weather", false);
-                std::string city = wns.GetString("city", "");
                 cJSON_AddStringToObject(json, "weather_city", city.c_str());
                 return json;
             });

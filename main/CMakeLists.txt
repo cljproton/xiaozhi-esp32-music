@@ -49,7 +49,6 @@ set(SOURCES "audio/audio_codec.cc"
             "handlers/auth_api_handler.cc"
             "handlers/music_api_handler.cc"
             "handlers/system_api_handler.cc"
-            "standby/standby_storage.cc"
             "weather/weather_service.cc"
             )
 
