@@ -33,15 +33,31 @@ extern "C" {
 
 namespace radio {
 
-// 4 s of mono 16-bit @24 kHz, pre-rolled before the first I2S write so the
-// stream starts with a full HLS ring buffer behind it.
-constexpr size_t kPrebufferSamples = 24000 * 4;
-// 自动重连时缩短预滚，避免每次断流都要多等 4s 才出声。
-constexpr size_t kRestartPrebufferSamples = 24000 * 12 / 10;
+// mono 16-bit @24 kHz, pre-rolled before the first I2S write so the stream
+// starts with a full HLS ring buffer behind it.
+// >1KB 的 vector 分配走 PSRAM (CONFIG_SPIRAM_USE_MALLOC), 但 insert 渐进增长
+// 会让新旧缓冲同时驻留、翻倍峰值, 在分片加载时拿不到连续大块而 abort。
+// 因此按 PSRAM 余量选档并一次性 reserve 到位, 把峰值压到 1 倍; PSRAM 紧张的
+// 板子自动退回短预滚, 避免启动时拿不到连续大块。
+constexpr size_t kPrebufferSamplesHi = 24000 * 6;   // 6 s
+constexpr size_t kPrebufferSamplesLo = 24000 * 4;   // 4 s
+// 自动重连时缩短预滚，避免每次断流都要多等才出声。
+constexpr size_t kRestartPrebufferSamples = 24000 * 18 / 10;
+// 6s 预滚需 ~288KB 连续块 + HLS ring 2MB; 余量低于此值退回 4s。
+constexpr size_t kPrebufferHiPsramThreshold = 3 * 1024 * 1024;
 
-// 连续失败上限：仍能覆盖长时间网络抖动（退避封顶 16s，约 2 分钟），
-// 但不会让无效 URL 无限重连、麦克风一直静音。
+// 按启动时 PSRAM 余量选预滚档位：大块连续分配留足余量，避免 realloc 失败。
+size_t SelectPrebufferSamples() {
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    return psram_free >= kPrebufferHiPsramThreshold ? kPrebufferSamplesHi : kPrebufferSamplesLo;
+}
+
+// 连续失败上限：避免无效 URL 无限重连、麦克风一直静音。
 constexpr int kMaxConsecutiveRestarts = 10;
+// 借鉴 RadioDroid 的 settings_retry_delay=100ms: 固定短延迟快速重试。
+// 之前用 backoff_s*1000 传给微秒级 esp_timer, 实为 1~16ms, 网络抖动时
+// 1 秒内连击耗尽 10 次机会; 100ms 节奏给网络恢复留出窗口。
+constexpr uint64_t kRetryDelayUs = 100 * 1000;
 
 // 海外台链路抖动时 10s 读超时会被误判为断流并触发整机重建（实测静音 18s），
 // 保持 vendor 默认的 30s 读超时，配合 1MB 环形缓冲吸收抖动。
@@ -114,7 +130,12 @@ public:
             ESP_LOGI(TAG, "No station entry, using fallback gain: %d%%", gain_);
         }
         state_ = RadioState::kConnecting;
+        // 按 PSRAM 余量选档: 大块连续分配留足余量, 紧张板子退回 4s 防 abort。
+        prebuffer_target_ = quick_preroll ? kRestartPrebufferSamples : SelectPrebufferSamples();
         preroll_.clear();
+        // 一次性预留完整预滚容量: 避免 insert 渐进增长时新旧缓冲翻倍峰值,
+        // 在 HLS 分片加载的 PSRAM 紧张窗口拿不到连续大块而 abort。
+        preroll_.reserve(prebuffer_target_);
         preroll_done_ = false;
         quick_preroll_ = quick_preroll;  // 用户开台走完整预滚，自动重连走短预滚
         mute_ = false;
@@ -150,8 +171,7 @@ public:
             }
             if (!self->preroll_done_) {
                 self->preroll_.insert(self->preroll_.end(), samples, samples + count);
-                size_t target = self->quick_preroll_ ? kRestartPrebufferSamples : kPrebufferSamples;
-                if (self->preroll_.size() < target) {
+                if (self->preroll_.size() < self->prebuffer_target_) {
                     // Not touching I2S lets the decoder drain the HLS ring
                     // buffer into the preroll at full speed.
                     return data_size;
@@ -294,7 +314,7 @@ public:
 
         ESP_LOGI(TAG, "Buffer %u KB, preroll %u ms, internal free %u KB, PSRAM free %u KB",
                  (unsigned)(hls_cfg.io_cfg.buffer_cfg.buffer_size / 1024),
-                 (unsigned)((quick_preroll_ ? kRestartPrebufferSamples : kPrebufferSamples) * 1000 / 24000),
+                 (unsigned)(prebuffer_target_ * 1000 / 24000),
                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
@@ -546,9 +566,9 @@ public:
     void SetPlaybackMode(PlaybackMode mode) override {}
 
 private:
-    // 自动重连：指数退避（1/2/4/8/16s，上限 16s）后由主任务回调统一执行重启，
-    // 避免在 esp_timer task 上下文操作播放器。要求调用方在主任务上下文（如
-    // Application::Schedule 投递的任务）内。
+    // 自动重连：固定 100ms 短延迟（对齐 RadioDroid 重试节奏）后由主任务回调
+    // 统一执行重启，避免在 esp_timer task 上下文操作播放器。要求调用方在主任务
+    // 上下文（如 Application::Schedule 投递的任务）内。
     void TriggerAutoRestart(const std::string& url, RadioState require_state) {
         if (url.empty() || stop_requested_ || state_ != require_state) {
             restart_pending_ = false;
@@ -570,14 +590,7 @@ private:
         }
         restart_count_++;
         ESP_LOGW(TAG, "Auto-restarting stream (attempt %d)", restart_count_);
-        int backoff_s = 1;
-        for (int i = 1; i < restart_count_ && backoff_s < 16; ++i) {
-            backoff_s *= 2;
-        }
-        if (backoff_s > 16) {
-            backoff_s = 16;
-        }
-        esp_timer_start_once(restart_backoff_timer_, backoff_s * 1000);
+        esp_timer_start_once(restart_backoff_timer_, kRetryDelayUs);
     }
 
     static void RestartBackoffTimerCallback(void* arg) {
@@ -755,6 +768,7 @@ private:
     int gain_ = 100;
     std::mutex lifecycle_mutex_;
     std::vector<int16_t> preroll_;
+    size_t prebuffer_target_ = kPrebufferSamplesHi;
     bool preroll_done_ = false;
     std::atomic<bool> quick_preroll_{false};
     PcmCallback pcm_callback_;
