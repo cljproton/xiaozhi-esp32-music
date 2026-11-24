@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
+#include "weather/weather_service.h"
 #include "websocket_protocol.h"
 
 #include <driver/gpio.h>
@@ -23,6 +24,7 @@
 #include <cJSON.h>
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include <limits>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -393,6 +395,27 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
+            // Show local time + weather in the center while idle; hide on conversation
+            if (GetDeviceState() == kDeviceStateIdle) {
+                time_t now = time(nullptr);
+                struct tm* tm_now = localtime(&now);
+                if (tm_now != nullptr && tm_now->tm_year >= 2025 - 1900) {
+                    char idle_text[64];
+                    auto info = weather::GetLastWeather();
+                    if (info.valid) {
+                        snprintf(idle_text, sizeof(idle_text), "%02d:%02d\n%s %.0f°C",
+                                 tm_now->tm_hour, tm_now->tm_min,
+                                 info.description.c_str(), info.temperature);
+                    } else {
+                        snprintf(idle_text, sizeof(idle_text), "%02d:%02d",
+                                 tm_now->tm_hour, tm_now->tm_min);
+                    }
+                    display->SetIdleInfo(idle_text);
+                }
+            } else {
+                display->SetIdleInfo(nullptr);
+            }
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
@@ -446,6 +469,13 @@ void Application::HandleNetworkConnectedEvent() {
                                                                                ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
         esp_netif_sntp_init(&sntp_config);
         ESP_LOGI(TAG, "SNTP initialized");
+    }
+
+    // Start weather updates once the network is ready (also sets the IP-based timezone)
+    static bool weather_started = false;
+    if (!weather_started) {
+        weather_started = true;
+        weather::Initialize("", nullptr);
     }
 
     // Update the status bar immediately to show the network state
@@ -1252,6 +1282,9 @@ void Application::HandleStateChangedEvent() {
         default:
             // Do nothing
             break;
+    }
+    if (new_state != kDeviceStateIdle) {
+        display->SetIdleInfo(nullptr);
     }
 }
 

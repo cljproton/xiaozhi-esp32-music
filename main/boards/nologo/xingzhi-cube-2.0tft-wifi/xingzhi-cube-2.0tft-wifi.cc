@@ -76,13 +76,6 @@ private:
 
     void InitializePowerManager() {
         power_manager_ = new PowerManager(POWER_USB_IN);  // usb是否插入引脚
-        power_manager_->OnChargingStatusChanged([this](bool is_charging) {
-            if (is_charging) {
-                power_save_timer_->SetEnabled(false);
-            } else {
-                power_save_timer_->SetEnabled(true);
-            }
-        });
     }
 
     void InitializePowerSaveTimer() {
@@ -321,13 +314,8 @@ public:
     }
 
     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
-        static bool last_discharging = false;
         charging = power_manager_->IsCharging();
         discharging = power_manager_->IsDischarging();
-        if (discharging != last_discharging) {
-            power_save_timer_->SetEnabled(discharging);
-            last_discharging = discharging;
-        }
         level = power_manager_->GetBatteryLevel();
         return true;
     }

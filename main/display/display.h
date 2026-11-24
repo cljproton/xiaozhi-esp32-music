@@ -63,6 +63,8 @@ public:
     virtual bool IsMonochrome() const { return false; }
     virtual bool SupportsGuiOperations() const { return false; }
     virtual void SetHideSubtitle(bool hide) { (void)hide; }
+    // Idle screen info (time + weather). nullptr/empty hides it and restores the emotion.
+    virtual void SetIdleInfo(const char* text) { (void)text; }
     virtual bool InsertAnimDialog(const char* name, uint32_t duration_ms) {
         (void)name;
         (void)duration_ms;

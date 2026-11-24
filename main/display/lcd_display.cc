@@ -338,6 +338,9 @@ LcdDisplay::~LcdDisplay() {
     if (preview_image_ != nullptr) {
         lv_obj_del(preview_image_);
     }
+    if (idle_info_label_ != nullptr) {
+        lv_obj_del(idle_info_label_);
+    }
     if (chat_message_label_ != nullptr) {
         lv_obj_del(chat_message_label_);
     }
@@ -402,6 +405,28 @@ void LcdDisplay::ShowEmotion() {
     }
     if (emotion_uses_image_ && gif_controller_ && !gif_controller_->IsPlaying()) {
         gif_controller_->Start();
+    }
+}
+
+void LcdDisplay::SetIdleInfo(const char* text) {
+    DisplayLockGuard lock(this);
+    if (idle_info_label_ == nullptr) {
+        return;
+    }
+    if (text != nullptr && text[0] != '\0') {
+        lv_label_set_text(idle_info_label_, text);
+        if (gif_controller_ && gif_controller_->IsPlaying()) {
+            gif_controller_->Stop();
+        }
+        if (emoji_box_) lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+        if (emoji_label_) lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+        if (emoji_image_) lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(idle_info_label_);
+    } else if (!lv_obj_has_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
+        if (emoji_box_) lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+        ShowEmotion();
     }
 }
 
@@ -555,6 +580,16 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
     lv_label_set_text(emoji_label_, MATERIAL_SYMBOLS_ROBOT_2);
+
+    // Centered idle info (time + weather), hidden during conversations
+    idle_info_label_ = lv_label_create(screen);
+    lv_obj_set_width(idle_info_label_, LV_HOR_RES - 16);
+    lv_obj_set_style_text_align(idle_info_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(idle_info_label_, text_font, 0);
+    lv_obj_set_style_text_color(idle_info_label_, lvgl_theme->text_color(), 0);
+    lv_label_set_text(idle_info_label_, "");
+    lv_obj_align(idle_info_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
 }
 #if CONFIG_IDF_TARGET_ESP32P4
 #define MAX_MESSAGES 40
@@ -946,6 +981,16 @@ void LcdDisplay::SetupUI() {
     emoji_image_ = lv_img_create(emoji_box_);
     lv_obj_center(emoji_image_);
     lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+
+    /* Centered idle info (time + weather), hidden during conversations */
+    idle_info_label_ = lv_label_create(screen);
+    lv_obj_set_width(idle_info_label_, LV_HOR_RES - 16);
+    lv_obj_set_style_text_align(idle_info_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(idle_info_label_, text_font, 0);
+    lv_obj_set_style_text_color(idle_info_label_, lvgl_theme->text_color(), 0);
+    lv_label_set_text(idle_info_label_, "");
+    lv_obj_align(idle_info_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
 
     /* Middle layer: preview_image_ - centered display */
     preview_image_ = lv_image_create(screen);
