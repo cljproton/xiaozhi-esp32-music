@@ -40,7 +40,6 @@ protected:
     lv_obj_t* idle_desc_label_ = nullptr;
     lv_obj_t* idle_detail_label_ = nullptr;
     lv_obj_t* idle_detail2_label_ = nullptr;
-    lv_obj_t* idle_hint_label_ = nullptr;
     lv_obj_t* idle_city_card_ = nullptr;
     lv_obj_t* idle_city_label_ = nullptr;
     lv_obj_t* emoji_label_ = nullptr;

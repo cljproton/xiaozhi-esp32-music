@@ -464,6 +464,8 @@ void Application::Run() {
                     if (w.valid) {
                         snprintf(idle.temperature, sizeof(idle.temperature), "%.0f°C",
                                  w.temperature);
+                        idle.temp_value = w.temperature;
+                        idle.has_temp = true;
                         snprintf(idle.description, sizeof(idle.description), "%s",
                                  weather::Describe(w.weather_code).c_str());
                         if (w.has_daily) {

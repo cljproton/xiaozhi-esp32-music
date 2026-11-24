@@ -24,13 +24,24 @@ constexpr const char* kKeyLon = "lon";
 constexpr const char* kKeyCached = "cached";
 
 // open-meteo endpoints
-constexpr const char* kGeocodeUrl = "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh&format=json";
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+constexpr const char* kGeocodeUrl =
+    "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh&format=json";
+#else
+constexpr const char* kGeocodeUrl =
+    "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json";
+#endif
 constexpr const char* kWeatherUrl =
     "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
     "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"
     "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto";
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+constexpr const char* kIpGeoUrl =
+    "https://ipwho.is/?fields=latitude,longitude,city,country,timezone&lang=zh-CN";
+#else
 constexpr const char* kIpGeoUrl =
     "https://ipwho.is/?fields=latitude,longitude,city,country,timezone";
+#endif
 
 // ESP-IDF newlib only understands POSIX TZ strings (e.g. "CST-8"), not IANA
 // names such as "Asia/Shanghai". Derive a POSIX string from the UTC offset.
@@ -154,31 +165,31 @@ std::string HttpGet(const char* url) {
     return body;
 }
 
-// WMO code -> OpenWeatherMap icon name (day variants)
-const char* WmoToOwm(int code) {
-    if (code == 0) return "01d";
-    if (code == 1) return "02d";
-    if (code == 2) return "03d";
-    if (code == 3) return "04d";
-    if (code == 45 || code == 48) return "50d";
-    if (code >= 51 && code <= 57) return "09d";
-    if (code >= 61 && code <= 67) return "10d";
-    if (code >= 71 && code <= 77) return "13d";
-    if (code >= 80 && code <= 82) return "10d";
-    if (code >= 85 && code <= 86) return "13d";
-    if (code >= 95) return "11d";
+// WMO code -> Twemoji codepoint (colorful PNG icon)
+const char* WmoToTwemoji(int code) {
+    if (code == 0) return "2600";        // ☀
+    if (code == 1 || code == 2) return "26c5";  // ⛅
+    if (code == 3) return "2601";        // ☁
+    if (code == 45 || code == 48) return "1f32b";  // 🌫
+    if (code >= 51 && code <= 57) return "1f326";  // 🌦
+    if (code >= 61 && code <= 67) return "1f327";  // 🌧
+    if (code >= 71 && code <= 77) return "1f328";  // 🌨
+    if (code >= 80 && code <= 82) return "1f326";  // 🌦
+    if (code >= 85 && code <= 86) return "1f328";  // 🌨
+    if (code >= 95) return "1f329";      // ⛈
     return nullptr;
 }
 
 void DownloadIcon(int code) {
-    const char* owm = WmoToOwm(code);
-    if (owm == nullptr) return;
+    const char* emoji = WmoToTwemoji(code);
+    if (emoji == nullptr) return;
     {
         std::lock_guard<std::mutex> lock(g_icon_mutex);
-        if (g_icon_code == owm) return;
+        if (g_icon_code == emoji) return;
     }
-    char url[128];
-    snprintf(url, sizeof(url), "https://openweathermap.org/img/wn/%s.png", owm);
+    char url[160];
+    snprintf(url, sizeof(url),
+             "https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/%s.png", emoji);
     std::string png = HttpGet(url);
     static const uint8_t kPngMagic[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
     if (png.size() < sizeof(kPngMagic) || memcmp(png.data(), kPngMagic, sizeof(kPngMagic)) != 0) {
@@ -187,8 +198,8 @@ void DownloadIcon(int code) {
     }
     std::lock_guard<std::mutex> lock(g_icon_mutex);
     g_icon_png = std::move(png);
-    g_icon_code = owm;
-    ESP_LOGI(TAG, "Weather icon downloaded: %s (%u bytes)", owm, (unsigned)g_icon_png.size());
+    g_icon_code = emoji;
+    ESP_LOGI(TAG, "Weather icon downloaded: %s (%u bytes)", emoji, (unsigned)g_icon_png.size());
 }
 
 // Parse geocoding result
@@ -427,6 +438,8 @@ void Initialize(const std::string& city, std::function<void(const WeatherInfo&)>
         }
     }
     LoadCached();
+    // Restore the icon from cached weather before the first fetch completes.
+    if (g_last_weather.valid) DownloadIcon(g_last_weather.weather_code);
     // Start task if not already running
     if (!g_running) {
         xTaskCreatePinnedToCore(WeatherTask, "weather_task", 6144, nullptr, 3, &g_task_handle, 1);

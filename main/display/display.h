@@ -70,12 +70,14 @@ public:
         char time[16] = "";
         char date[32] = "";
         char temperature[16] = "";
-        char description[32] = "";
+        char description[64] = "";
         char detail[80] = "";
         char detail2[80] = "";
         char hint[64] = "";
         char city[64] = "";
         std::string icon_png;
+        float temp_value = 0.0f;
+        bool has_temp = false;
         int weather_code = -1;
         bool valid = false;
     };
