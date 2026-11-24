@@ -79,18 +79,9 @@ private:
     }
 
     void InitializePowerSaveTimer() {
-        power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
-        power_save_timer_->OnEnterSleepMode([this]() {
-            ESP_LOGI(TAG, "Enabling sleep mode");
-            display_->SetChatMessage("system", "");
-            display_->SetEmotion("sleepy");
-            GetBacklight()->SetBrightness(1);
-        });
-        power_save_timer_->OnExitSleepMode([this]() {
-            display_->SetChatMessage("system", "");
-            display_->SetEmotion("neutral");
-            GetBacklight()->RestoreBrightness();
-        });
+        // No internal dim stage: idle must keep the time/weather display readable.
+        // Only the web-configured shutdown timers are active.
+        power_save_timer_ = new PowerSaveTimer(-1, -1, -1);
         power_save_timer_->OnShutdownRequest([this]() {
             ESP_LOGI(TAG, "Shutdown requested by power save timer");
             if (power_manager_) {
