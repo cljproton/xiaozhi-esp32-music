@@ -585,8 +585,7 @@ void LcdDisplay::SetupUI() {
     idle_info_label_ = lv_label_create(screen);
     lv_obj_set_width(idle_info_label_, LV_HOR_RES - 16);
     lv_obj_set_style_text_align(idle_info_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(idle_info_label_, text_font, 0);
-    lv_obj_set_style_text_color(idle_info_label_, lvgl_theme->text_color(), 0);
+    // Font/color inherit from the screen so SetTheme() can update them safely.
     lv_label_set_text(idle_info_label_, "");
     lv_obj_align(idle_info_label_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
@@ -986,8 +985,7 @@ void LcdDisplay::SetupUI() {
     idle_info_label_ = lv_label_create(screen);
     lv_obj_set_width(idle_info_label_, LV_HOR_RES - 16);
     lv_obj_set_style_text_align(idle_info_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(idle_info_label_, text_font, 0);
-    lv_obj_set_style_text_color(idle_info_label_, lvgl_theme->text_color(), 0);
+    // Font/color inherit from the screen so SetTheme() can update them safely.
     lv_label_set_text(idle_info_label_, "");
     lv_obj_align(idle_info_label_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(idle_info_label_, LV_OBJ_FLAG_HIDDEN);
@@ -1387,6 +1385,9 @@ void LcdDisplay::SetTheme(Theme* theme) {
     lv_obj_set_style_text_color(mute_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
+    if (idle_info_label_ != nullptr) {
+        lv_obj_set_style_text_color(idle_info_label_, lvgl_theme->text_color(), 0);
+    }
 
     // If we have the chat message style, update all message bubbles
 #if CONFIG_USE_WECHAT_MESSAGE_STYLE
