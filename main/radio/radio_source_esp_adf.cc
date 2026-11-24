@@ -193,7 +193,9 @@ public:
         cfg.out.user_ctx = this;
         cfg.task_prio = 6;
         cfg.task_stack = 6 * 1024;
-        cfg.task_core = 0;
+        // 解码任务固定 core 1，与 audio output 同核；core 0 留给 HTTP IO(TLS 握手)与 WiFi，
+        // 避免 TLS 解密抢占解码/I2S 导致卡顿。
+        cfg.task_core = 1;
 
         if (esp_audio_simple_player_new(&cfg, &player_) != ESP_GMF_ERR_OK) {
             ESP_LOGE(TAG, "player_new failed");
@@ -215,6 +217,8 @@ public:
             // 默认环只有 20KB，64kbps 直连流仅能扛 2.5s 抖动；扩到 1MB
             // （HLS 的 playlist/分片请求也走此 IO，另有独立的 2MB HLS 环）。
             http_cfg.io_cfg.buffer_cfg.buffer_size = 1 * 1024 * 1024;
+            // 网络侧任务固定 core 0（与 WiFi 协议栈同核），解码/输出在 core 1。
+            http_cfg.io_cfg.thread.core = 0;
             // 每次建立连接（含服务器断开后的静默重连）都会回调 PRE_REQUEST。
             // 直连流重连后靠这个事件触发解码器重置（见 RestartInPlace），不拆管线。
             http_cfg.event_handle = [](http_stream_event_msg_t* msg) -> int {
@@ -295,6 +299,7 @@ public:
         // NOTE: keep at 2MB — a 4MB bump exhausted PSRAM and failed the GMF
         // data bus allocation on the 8MB-PSRAM cube boards.
         hls_cfg.io_cfg.buffer_cfg.buffer_size = 2 * 1024 * 1024;
+        hls_cfg.io_cfg.thread.core = 0;  // 网络侧（playlist 解析）与 HTTP IO 同核
         hls_cfg.file_seg_cb = [](esp_hls_file_seg_info_t* info, void* ctx) -> int {
             if (info) {
                 ESP_LOGI(TAG, "Segment format: %s", ESP_FOURCC_TO_STR(info->format));
