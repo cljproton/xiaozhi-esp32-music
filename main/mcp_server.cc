@@ -418,15 +418,18 @@ void McpServer::AddCommonTools() {
                                 : "请在浏览器打开 " + page + " 添加电台。";
                             return std::unexpected("设备上还没有保存电台。" + hint);
                         }
-                        const radio::StationManager::Station* target = nullptr;
+                        // 用值拷贝保存选中电台：matches/stations 是局部 vector，
+                        // 若存元素裸指针，作用域结束后 target 悬空，url 会被栈复用覆盖
+                        // （实测语音 radio.play 拿到 "p1" 而非真实 URL）。
+                        std::optional<radio::StationManager::Station> target;
                         if (!name.empty()) {
                             auto matches = radio_source->GetStationManager().FindByName(name);
                             if (matches.empty()) {
                                 return std::unexpected("没有匹配的电台：" + name);
                             }
-                            target = &matches.front();
+                            target = matches.front();
                         } else {
-                            target = &stations.front();
+                            target = stations.front();
                         }
                         radio_source->SetVolume(100);
                         Application::GetInstance().StartRadio(target->url, true);

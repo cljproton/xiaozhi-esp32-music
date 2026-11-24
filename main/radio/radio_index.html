@@ -7,14 +7,15 @@
 <style>
 :root{--bg:#070b14;--card:#111827;--line:#26334a;--fg:#e6edf7;--dim:#94a3b8;--acc:#22d3ee;--ok:#3ecf8e}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif;background:var(--bg);color:var(--fg);font-size:15px;padding:16px 14px 130px;max-width:640px;margin:0 auto}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif;background:var(--bg);color:var(--fg);font-size:15px;padding:16px 14px 210px;max-width:640px;margin:0 auto}
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 nav{display:flex;align-items:center;gap:8px}
 nav a{color:var(--dim);text-decoration:none;font-size:13px}
 nav a:hover{color:var(--acc)}
 h1{font-size:18px}
 #lang{background:var(--card);border:1px solid var(--line);color:var(--dim);border-radius:8px;padding:4px 10px;cursor:pointer}
-#status{position:fixed;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;font-size:14px;z-index:20}
+#status{position:fixed;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;font-size:14px;z-index:20}
+.status-row{display:flex;align-items:center;gap:8px}
 #status-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dot{width:9px;height:9px;border-radius:50%;background:#555;flex:none}
 .dot.on{background:var(--ok)}
@@ -44,7 +45,7 @@ li:last-child{border-bottom:0}
 .gain .val{font-size:12px;color:var(--dim);width:42px;text-align:right}
 #mirrors-box{display:none;margin-top:8px}
 #mirrors-box.open{display:block}
-#vol-row{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:14px}
+#vol-row{display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--line);font-size:14px}
 #vol-row input[type=range]{flex:1;accent-color:var(--acc);min-width:60px}
 .vol-label{color:var(--dim);font-size:13px;white-space:nowrap}
 .vol-val{color:var(--dim);font-size:12px;width:38px;text-align:right}
@@ -55,7 +56,7 @@ textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(
 .banner-title{font-size:15px;font-weight:700}
 .banner-desc{font-size:12px;color:var(--dim)}
 @media (max-width:480px){
-  body{padding:10px}
+  body{padding:10px 10px 210px}
   .card{padding:10px}
   input,select,textarea{font-size:16px}
   button.small{padding:8px 12px;font-size:14px}
@@ -68,8 +69,10 @@ textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(
   <span class="banner-title">FinNav</span>
   <span class="banner-desc">打开更广阔的格局</span>
 </a>
-<div id="status"><span class="dot" id="dot"></span><span id="status-text">-</span><button id="btn-stop" class="small ghost" style="margin-left:auto" onclick="stopPlay()">&#9209; <span id="t-stop">停止</span></button></div>
-<div id="vol-row"><span class="vol-label">&#128266; <span id="t-vol">音量</span></span><input type="range" id="vol" min="0" max="100" step="1" value="100" aria-label="volume"><span id="vol-val" class="vol-val">100%</span></div>
+<div id="status">
+  <div class="status-row"><span class="dot" id="dot"></span><span id="status-text">-</span><button id="btn-stop" class="small ghost" style="margin-left:auto" onclick="stopPlay()">&#9209; <span id="t-stop">停止</span></button></div>
+  <div id="vol-row"><span class="vol-label">&#128266; <span id="t-vol">音量</span></span><input type="range" id="vol" min="0" max="100" step="1" value="100" aria-label="volume"><span id="vol-val" class="vol-val">100%</span></div>
+</div>
 
 <div class="card">
   <h2 id="t-search">搜索电台（radio-browser.info）</h2>
