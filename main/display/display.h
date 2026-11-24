@@ -63,8 +63,22 @@ public:
     virtual bool IsMonochrome() const { return false; }
     virtual bool SupportsGuiOperations() const { return false; }
     virtual void SetHideSubtitle(bool hide) { (void)hide; }
-    // Idle screen info (time + weather). nullptr/empty hides it and restores the emotion.
-    virtual void SetIdleInfo(const char* text) { (void)text; }
+
+    // Idle screen content. valid=false hides the idle overlay.
+    struct IdleScreenInfo {
+        char greeting[32] = "";
+        char time[16] = "";
+        char date[32] = "";
+        char temperature[16] = "";
+        char description[32] = "";
+        char detail[80] = "";
+        char hint[64] = "";
+        char city[64] = "";
+        int weather_code = -1;
+        bool valid = false;
+    };
+    virtual void SetIdleInfo(const IdleScreenInfo& info) { (void)info; }
+    virtual bool HasIdleInfo() const { return false; }
     virtual bool InsertAnimDialog(const char* name, uint32_t duration_ms) {
         (void)name;
         (void)duration_ms;

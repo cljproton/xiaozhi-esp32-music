@@ -24,7 +24,16 @@ protected:
     lv_obj_t* side_bar_ = nullptr;
     lv_obj_t* bottom_bar_ = nullptr;
     lv_obj_t* preview_image_ = nullptr;
-    lv_obj_t* idle_info_label_ = nullptr;
+    lv_obj_t* idle_greeting_label_ = nullptr;
+    lv_obj_t* idle_time_label_ = nullptr;
+    lv_obj_t* idle_date_label_ = nullptr;
+    lv_obj_t* idle_icon_label_ = nullptr;
+    lv_obj_t* idle_temp_label_ = nullptr;
+    lv_obj_t* idle_desc_label_ = nullptr;
+    lv_obj_t* idle_detail_label_ = nullptr;
+    lv_obj_t* idle_hint_label_ = nullptr;
+    lv_obj_t* idle_city_card_ = nullptr;
+    lv_obj_t* idle_city_label_ = nullptr;
     lv_obj_t* emoji_label_ = nullptr;
     lv_obj_t* emoji_image_ = nullptr;
     std::unique_ptr<LvglGif> gif_controller_ = nullptr;
@@ -37,6 +46,7 @@ protected:
 
     void InitializeLcdThemes();
     void ShowEmotion();
+    void CreateIdleUi();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -58,7 +68,8 @@ public:
 
     // Set whether to hide chat messages/subtitles
     virtual void SetHideSubtitle(bool hide) override;
-    virtual void SetIdleInfo(const char* text) override;
+    virtual void SetIdleInfo(const IdleScreenInfo& info) override;
+    virtual bool HasIdleInfo() const override { return true; }
 };
 
 // SPI LCD display

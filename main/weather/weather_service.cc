@@ -23,8 +23,36 @@ constexpr const char* kKeyCached = "cached";
 
 // open-meteo endpoints
 constexpr const char* kGeocodeUrl = "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh&format=json";
-constexpr const char* kWeatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code&timezone=auto";
-constexpr const char* kIpGeoUrl = "https://ipwho.is/?fields=latitude,longitude,city,country,timezone";
+constexpr const char* kWeatherUrl =
+    "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+    "&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"
+    "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto";
+constexpr const char* kIpGeoUrl =
+    "https://ipwho.is/?fields=latitude,longitude,city,country,timezone";
+
+// ESP-IDF newlib only understands POSIX TZ strings (e.g. "CST-8"), not IANA
+// names such as "Asia/Shanghai". Derive a POSIX string from the UTC offset.
+void SetTimezoneFromOffset(int offset_seconds) {
+    int total_min = offset_seconds < 0 ? -offset_seconds : offset_seconds;
+    total_min /= 60;
+    int hours = total_min / 60;
+    int minutes = total_min % 60;
+    char tz[32];
+    if (minutes != 0) {
+        snprintf(tz, sizeof(tz), "UTC%c%d:%02d", offset_seconds >= 0 ? '-' : '+', hours,
+                 minutes);
+    } else {
+        snprintf(tz, sizeof(tz), "UTC%c%d", offset_seconds >= 0 ? '-' : '+', hours);
+    }
+    setenv("TZ", tz, 1);
+    tzset();
+    time_t now = time(nullptr);
+    struct tm local = {};
+    localtime_r(&now, &local);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &local);
+    ESP_LOGI(TAG, "Timezone set to %s (local time %s)", tz, buf);
+}
 
 weather::WeatherInfo g_last_weather{};
 std::string g_city;
@@ -34,8 +62,9 @@ WeatherCallback g_callback;
 bool g_running = false;
 TaskHandle_t g_task_handle = nullptr;
 
-// WMO weather code -> Chinese description
+// WMO weather code -> localized description
 const char* WeatherCodeToDesc(int code) {
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
     switch (code) {
         case 0: return "晴";
         case 1: case 2: case 3: return "多云";
@@ -52,6 +81,24 @@ const char* WeatherCodeToDesc(int code) {
         case 96: case 99: return "雷暴伴冰雹";
         default: return "未知";
     }
+#else
+    switch (code) {
+        case 0: return "Clear";
+        case 1: case 2: case 3: return "Partly cloudy";
+        case 45: case 48: return "Fog";
+        case 51: case 53: case 55: return "Drizzle";
+        case 56: case 57: return "Freezing drizzle";
+        case 61: case 63: case 65: return "Rain";
+        case 66: case 67: return "Freezing rain";
+        case 71: case 73: case 75: return "Snow";
+        case 77: return "Snow grains";
+        case 80: case 81: case 82: return "Rain showers";
+        case 85: case 86: return "Snow showers";
+        case 95: return "Thunderstorm";
+        case 96: case 99: return "Thunderstorm with hail";
+        default: return "Unknown";
+    }
+#endif
 }
 
 // Simple URL encode for city name
@@ -137,7 +184,14 @@ bool ParseIpGeo(const std::string& json, float& lat, float& lon, std::string& ci
         lat = static_cast<float>(lat_j->valuedouble);
         lon = static_cast<float>(lon_j->valuedouble);
         if (cJSON_IsString(city_j)) city = city_j->valuestring;
-        if (cJSON_IsString(tz_j)) tz = tz_j->valuestring;
+        if (cJSON_IsObject(tz_j)) {
+            cJSON* tz_id = cJSON_GetObjectItem(tz_j, "id");
+            if (cJSON_IsString(tz_id)) tz = tz_id->valuestring;
+            cJSON* tz_offset = cJSON_GetObjectItem(tz_j, "offset");
+            if (cJSON_IsNumber(tz_offset)) SetTimezoneFromOffset(tz_offset->valueint);
+        } else if (cJSON_IsString(tz_j)) {
+            tz = tz_j->valuestring;
+        }
         ok = true;
     }
     cJSON_Delete(root);
@@ -148,6 +202,8 @@ bool ParseIpGeo(const std::string& json, float& lat, float& lon, std::string& ci
 bool ParseWeather(const std::string& json, weather::WeatherInfo& info) {
     cJSON* root = cJSON_Parse(json.c_str());
     if (!root) return false;
+    cJSON* tz_offset = cJSON_GetObjectItem(root, "utc_offset_seconds");
+    if (cJSON_IsNumber(tz_offset)) SetTimezoneFromOffset(tz_offset->valueint);
     cJSON* current = cJSON_GetObjectItem(root, "current");
     if (!current) {
         cJSON_Delete(root);
@@ -167,6 +223,24 @@ bool ParseWeather(const std::string& json, weather::WeatherInfo& info) {
         info.updated_at = mktime(&tm);
         info.valid = true;
         ok = true;
+
+        cJSON* humidity = cJSON_GetObjectItem(current, "relative_humidity_2m");
+        cJSON* wind = cJSON_GetObjectItem(current, "wind_speed_10m");
+        if (cJSON_IsNumber(humidity) || cJSON_IsNumber(wind)) {
+            info.has_details = true;
+            if (cJSON_IsNumber(humidity)) info.humidity = static_cast<float>(humidity->valuedouble);
+            if (cJSON_IsNumber(wind)) info.wind_speed = static_cast<float>(wind->valuedouble);
+        }
+        cJSON* daily = cJSON_GetObjectItem(root, "daily");
+        if (daily) {
+            cJSON* max = cJSON_GetArrayItem(cJSON_GetObjectItem(daily, "temperature_2m_max"), 0);
+            cJSON* min = cJSON_GetArrayItem(cJSON_GetObjectItem(daily, "temperature_2m_min"), 0);
+            if (cJSON_IsNumber(max) && cJSON_IsNumber(min)) {
+                info.temp_max = static_cast<float>(max->valuedouble);
+                info.temp_min = static_cast<float>(min->valuedouble);
+                info.has_daily = true;
+            }
+        }
     }
     cJSON_Delete(root);
     return ok;
@@ -189,11 +263,6 @@ bool ResolveCoordinates() {
     std::string tz;
     if (!resp.empty() && ParseIpGeo(resp, g_lat, g_lon, g_city, tz)) {
         ESP_LOGI(TAG, "IP geolocation -> %.4f, %.4f (%s)", g_lat, g_lon, g_city.c_str());
-        // 根据 IP 定位设置时区，供待机时间显示使用
-        if (!tz.empty()) {
-            setenv("TZ", tz.c_str(), 1);
-            tzset();
-        }
         return true;
     }
     ESP_LOGE(TAG, "Failed to resolve coordinates");
@@ -220,6 +289,12 @@ bool FetchWeather() {
     cJSON_AddNumberToObject(json, "code", info.weather_code);
     cJSON_AddStringToObject(json, "desc", info.description.c_str());
     cJSON_AddNumberToObject(json, "time", info.updated_at);
+    cJSON_AddNumberToObject(json, "tmax", info.temp_max);
+    cJSON_AddNumberToObject(json, "tmin", info.temp_min);
+    cJSON_AddNumberToObject(json, "hum", info.humidity);
+    cJSON_AddNumberToObject(json, "wind", info.wind_speed);
+    cJSON_AddBoolToObject(json, "daily", info.has_daily);
+    cJSON_AddBoolToObject(json, "details", info.has_details);
     char* str = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
     if (str) {
@@ -228,7 +303,10 @@ bool FetchWeather() {
     }
     g_last_weather = info;
     if (g_callback) g_callback(info);
-    ESP_LOGI(TAG, "Weather updated: %.1f°C %s", info.temperature, info.description.c_str());
+    ESP_LOGI(TAG,
+             "Weather updated: %.1f°C %s (high %.0f / low %.0f, humidity %.0f%%, wind %.0f km/h)",
+             info.temperature, info.description.c_str(), info.temp_max, info.temp_min,
+             info.humidity, info.wind_speed);
     return true;
 }
 
@@ -249,6 +327,23 @@ void LoadCached() {
         g_last_weather.description = desc->valuestring;
         g_last_weather.updated_at = time->valueint;
         g_last_weather.valid = true;
+        // Newer fields are optional so old cached entries remain readable.
+        cJSON* tmax = cJSON_GetObjectItem(json, "tmax");
+        cJSON* tmin = cJSON_GetObjectItem(json, "tmin");
+        cJSON* daily = cJSON_GetObjectItem(json, "daily");
+        if (cJSON_IsNumber(tmax) && cJSON_IsNumber(tmin) && cJSON_IsTrue(daily)) {
+            g_last_weather.temp_max = static_cast<float>(tmax->valuedouble);
+            g_last_weather.temp_min = static_cast<float>(tmin->valuedouble);
+            g_last_weather.has_daily = true;
+        }
+        cJSON* hum = cJSON_GetObjectItem(json, "hum");
+        cJSON* wind = cJSON_GetObjectItem(json, "wind");
+        cJSON* details = cJSON_GetObjectItem(json, "details");
+        if (cJSON_IsTrue(details)) {
+            g_last_weather.has_details = true;
+            if (cJSON_IsNumber(hum)) g_last_weather.humidity = static_cast<float>(hum->valuedouble);
+            if (cJSON_IsNumber(wind)) g_last_weather.wind_speed = static_cast<float>(wind->valuedouble);
+        }
     }
     cJSON_Delete(json);
 }
@@ -316,6 +411,10 @@ void RequestUpdate() {
 
 WeatherInfo GetLastWeather() {
     return g_last_weather;
+}
+
+std::string Describe(int weather_code) {
+    return WeatherCodeToDesc(weather_code);
 }
 
 }  // namespace weather

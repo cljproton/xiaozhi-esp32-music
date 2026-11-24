@@ -26,10 +26,56 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <sys/time.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
 
 #define TAG "Application"
+
+// Localized idle-screen text. Uses Kconfig language macros so generated
+// lang_config.h stays untouched.
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+static const char* IdleGreeting(int hour) {
+    if (hour >= 5 && hour < 11) return "早上好";
+    if (hour >= 11 && hour < 13) return "中午好";
+    if (hour >= 13 && hour < 18) return "下午好";
+    return "晚上好";
+}
+static void IdleDateFormat(const struct tm* tm, char* out, size_t len) {
+    static const char* weeks[] = {"日", "一", "二", "三", "四", "五", "六"};
+    snprintf(out, len, "%d月%d日 周%s", tm->tm_mon + 1, tm->tm_mday, weeks[tm->tm_wday % 7]);
+}
+static const char* IdleWeatherHint(int code, float temp, bool valid) {
+    if (!valid) return "天气获取中…";
+    if (code >= 95) return "雷暴天气，尽量减少外出";
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "出门记得带伞";
+    if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "道路湿滑，注意保暖";
+    if (temp < 10) return "天气寒冷，注意添衣";
+    if (temp > 30) return "天气炎热，注意补水";
+    if (code == 0 && temp > 25) return "阳光明媚，适合外出";
+    return "";
+}
+#else
+static const char* IdleGreeting(int hour) {
+    if (hour >= 5 && hour < 11) return "Good morning";
+    if (hour >= 11 && hour < 13) return "Good noon";
+    if (hour >= 13 && hour < 18) return "Good afternoon";
+    return "Good evening";
+}
+static void IdleDateFormat(const struct tm* tm, char* out, size_t len) {
+    strftime(out, len, "%b %d, %a", tm);
+}
+static const char* IdleWeatherHint(int code, float temp, bool valid) {
+    if (!valid) return "Getting weather…";
+    if (code >= 95) return "Thunderstorm, stay indoors";
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "Take an umbrella";
+    if ((code >= 71 && code <= 77) || code == 85 || code == 86) return "Slippery roads, bundle up";
+    if (temp < 10) return "Cold, dress warmly";
+    if (temp > 30) return "Hot, stay hydrated";
+    if (code == 0 && temp > 25) return "Lovely day to go out";
+    return "";
+}
+#endif
 
 Application::Application() : notify_player_(audio_service_),
                               playback_scheduler_(std::make_unique<PlaybackScheduler>()) {
@@ -395,25 +441,75 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
-            // Show local time + weather in the center while idle; hide on conversation
+            // Idle screen: greeting, time+date, weather, location. Hidden in conversation.
             if (GetDeviceState() == kDeviceStateIdle) {
                 time_t now = time(nullptr);
                 struct tm* tm_now = localtime(&now);
                 if (tm_now != nullptr && tm_now->tm_year >= 2025 - 1900) {
-                    char idle_text[64];
-                    auto info = weather::GetLastWeather();
-                    if (info.valid) {
-                        snprintf(idle_text, sizeof(idle_text), "%02d:%02d\n%s %.0f°C",
-                                 tm_now->tm_hour, tm_now->tm_min,
-                                 info.description.c_str(), info.temperature);
+                    Display::IdleScreenInfo idle;
+                    snprintf(idle.greeting, sizeof(idle.greeting), "%s",
+                             IdleGreeting(tm_now->tm_hour));
+                    snprintf(idle.time, sizeof(idle.time), "%02d:%02d",
+                             tm_now->tm_hour, tm_now->tm_min);
+                    IdleDateFormat(tm_now, idle.date, sizeof(idle.date));
+
+                    auto w = weather::GetLastWeather();
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+                    const char* high_low_fmt = "最高%.0f° / 最低%.0f°";
+                    const char* details_fmt = "湿度%.0f%% · 风速%.0fkm/h";
+#else
+                    const char* high_low_fmt = "H %.0f° / L %.0f°";
+                    const char* details_fmt = "Hum %.0f%% · Wind %.0fkm/h";
+#endif
+                    if (w.valid) {
+                        snprintf(idle.temperature, sizeof(idle.temperature), "%.0f°C",
+                                 w.temperature);
+                        snprintf(idle.description, sizeof(idle.description), "%s",
+                                 weather::Describe(w.weather_code).c_str());
+                        if (w.has_daily || w.has_details) {
+                            if (w.has_daily && w.has_details) {
+                                char high_low[32], details[32];
+                                snprintf(high_low, sizeof(high_low), high_low_fmt,
+                                         w.temp_max, w.temp_min);
+                                snprintf(details, sizeof(details), details_fmt,
+                                         w.humidity, w.wind_speed);
+                                snprintf(idle.detail, sizeof(idle.detail), "%s · %s",
+                                         high_low, details);
+                            } else if (w.has_daily) {
+                                snprintf(idle.detail, sizeof(idle.detail), high_low_fmt,
+                                         w.temp_max, w.temp_min);
+                            } else {
+                                snprintf(idle.detail, sizeof(idle.detail), details_fmt,
+                                         w.humidity, w.wind_speed);
+                            }
+                        }
+                        snprintf(idle.hint, sizeof(idle.hint), "%s",
+                                 IdleWeatherHint(w.weather_code, w.temperature, true));
+                        idle.weather_code = w.weather_code;
                     } else {
-                        snprintf(idle_text, sizeof(idle_text), "%02d:%02d",
-                                 tm_now->tm_hour, tm_now->tm_min);
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+                        snprintf(idle.description, sizeof(idle.description), "天气获取中…");
+#else
+                        snprintf(idle.description, sizeof(idle.description), "Getting weather…");
+#endif
+                        snprintf(idle.hint, sizeof(idle.hint), "%s",
+                                 IdleWeatherHint(0, 0, false));
                     }
-                    display->SetIdleInfo(idle_text);
+                    const std::string city = weather::GetCity();
+                    if (!city.empty()) {
+                        snprintf(idle.city, sizeof(idle.city), "📍 %s", city.c_str());
+                    } else {
+#if defined(CONFIG_LANGUAGE_ZH_CN) || defined(CONFIG_LANGUAGE_ZH_TW)
+                        snprintf(idle.city, sizeof(idle.city), "📍 定位中…");
+#else
+                        snprintf(idle.city, sizeof(idle.city), "📍 Locating…");
+#endif
+                    }
+                    idle.valid = true;
+                    display->SetIdleInfo(idle);
                 }
             } else {
-                display->SetIdleInfo(nullptr);
+                display->SetIdleInfo(Display::IdleScreenInfo{});
             }
 
             // Print debug info every 10 seconds
@@ -467,6 +563,14 @@ void Application::HandleNetworkConnectedEvent() {
         sntp_started = true;
         esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(2,
                                                                                ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
+        sntp_config.sync_cb = [](struct timeval*) {
+            time_t now = time(nullptr);
+            struct tm tm_now = {};
+            localtime_r(&now, &tm_now);
+            char buf[32];
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_now);
+            ESP_LOGI(TAG, "SNTP synchronized, local time: %s", buf);
+        };
         esp_netif_sntp_init(&sntp_config);
         ESP_LOGI(TAG, "SNTP initialized");
     }
@@ -1284,7 +1388,7 @@ void Application::HandleStateChangedEvent() {
             break;
     }
     if (new_state != kDeviceStateIdle) {
-        display->SetIdleInfo(nullptr);
+        display->SetIdleInfo(Display::IdleScreenInfo{});
     }
 }
 
