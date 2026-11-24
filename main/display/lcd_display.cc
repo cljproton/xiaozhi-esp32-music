@@ -1,6 +1,7 @@
 #include "lcd_display.h"
 #include "assets/lang_config.h"
 #include "gif/lvgl_gif.h"
+#include "lvgl_image.h"
 #include "lvgl_theme.h"
 #include "settings.h"
 
@@ -339,16 +340,14 @@ LcdDisplay::~LcdDisplay() {
     if (preview_image_ != nullptr) {
         lv_obj_del(preview_image_);
     }
-    if (idle_city_card_ != nullptr) {
-        lv_obj_del(idle_city_card_);
-    }
+    if (idle_city_card_ != nullptr) lv_obj_del(idle_city_card_);
+    if (idle_time_row_ != nullptr) lv_obj_del(idle_time_row_);
+    if (idle_icon_box_ != nullptr) lv_obj_del(idle_icon_box_);
     if (idle_greeting_label_ != nullptr) lv_obj_del(idle_greeting_label_);
-    if (idle_time_label_ != nullptr) lv_obj_del(idle_time_label_);
-    if (idle_date_label_ != nullptr) lv_obj_del(idle_date_label_);
-    if (idle_icon_label_ != nullptr) lv_obj_del(idle_icon_label_);
     if (idle_temp_label_ != nullptr) lv_obj_del(idle_temp_label_);
     if (idle_desc_label_ != nullptr) lv_obj_del(idle_desc_label_);
     if (idle_detail_label_ != nullptr) lv_obj_del(idle_detail_label_);
+    if (idle_detail2_label_ != nullptr) lv_obj_del(idle_detail2_label_);
     if (idle_hint_label_ != nullptr) lv_obj_del(idle_hint_label_);
     if (chat_message_label_ != nullptr) {
         lv_obj_del(chat_message_label_);
@@ -417,16 +416,17 @@ void LcdDisplay::ShowEmotion() {
     }
 }
 
-static const char* WeatherEmoji(int code) {
-    if (code == 0) return "\xE2\x98\x80";                                    // ☀
-    if (code >= 1 && code <= 3) return "\xF0\x9F\x8C\xA4";                  // 🌤
-    if (code == 45 || code == 48) return "\xF0\x9F\x8C\xAB";                // 🌫
-    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82))
-        return "\xF0\x9F\x8C\xA7";                                           // 🌧
-    if ((code >= 71 && code <= 77) || code == 85 || code == 86)
-        return "\xE2\x9D\x84";                                               // ❄
-    if (code >= 95) return "\xE2\x9B\x88";                                   // ⛈
-    return "";
+static lv_obj_t* IconShape(lv_obj_t* parent, int w, int h, int x, int y,
+                           lv_color_t color, bool round) {
+    lv_obj_t* obj = lv_obj_create(parent);
+    lv_obj_set_size(obj, w, h);
+    lv_obj_set_style_radius(obj, round ? LV_RADIUS_CIRCLE : 0, 0);
+    lv_obj_set_style_bg_color(obj, color, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_pad_all(obj, 0, 0);
+    lv_obj_align(obj, LV_ALIGN_TOP_LEFT, x, y);
+    return obj;
 }
 
 static void SetIdleLabelText(lv_obj_t* label, const char* text) {
@@ -440,44 +440,104 @@ static void SetIdleLabelText(lv_obj_t* label, const char* text) {
     }
 }
 
+static void SetIdleObjVisible(lv_obj_t* obj, bool visible) {
+    if (obj == nullptr) return;
+    if (visible) {
+        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void LcdDisplay::CreateIdleUi() {
     auto screen = lv_screen_active();
-    lv_color_t dim = lv_color_hex(0x94A3B8);
-    lv_color_t bright = static_cast<LvglTheme*>(current_theme_)->text_color();
+    auto theme = static_cast<LvglTheme*>(current_theme_);
+    lv_color_t bright = theme->text_color();
+    lv_color_t dim = lv_color_hex(0x64748B);  // readable on both light and dark themes
 
     idle_greeting_label_ = lv_label_create(screen);
     lv_obj_set_width(idle_greeting_label_, LV_HOR_RES - 16);
     lv_obj_set_style_text_align(idle_greeting_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(idle_greeting_label_, dim, 0);
-    lv_obj_align(idle_greeting_label_, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_align(idle_greeting_label_, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_add_flag(idle_greeting_label_, LV_OBJ_FLAG_HIDDEN);
 
-    // Time and date share one line; the date follows the time label.
-    idle_time_label_ = lv_label_create(screen);
+    // Time and date form one centered flex row so neither can overflow.
+    idle_time_row_ = lv_obj_create(screen);
+    lv_obj_set_size(idle_time_row_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(idle_time_row_, 0, 0);
+    lv_obj_set_style_border_width(idle_time_row_, 0, 0);
+    lv_obj_set_style_bg_opa(idle_time_row_, LV_OPA_TRANSP, 0);
+    lv_obj_set_flex_flow(idle_time_row_, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(idle_time_row_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(idle_time_row_, LV_ALIGN_TOP_MID, 0, 38);
+    lv_obj_add_flag(idle_time_row_, LV_OBJ_FLAG_HIDDEN);
+
+    idle_time_label_ = lv_label_create(idle_time_row_);
     lv_obj_set_style_text_font(idle_time_label_, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(idle_time_label_, bright, 0);
     lv_label_set_text(idle_time_label_, "");
-    lv_obj_align(idle_time_label_, LV_ALIGN_TOP_MID, -30, 46);
-    lv_obj_add_flag(idle_time_label_, LV_OBJ_FLAG_HIDDEN);
 
-    idle_date_label_ = lv_label_create(screen);
+    idle_date_label_ = lv_label_create(idle_time_row_);
     lv_obj_set_style_text_color(idle_date_label_, dim, 0);
+    lv_obj_set_style_margin_left(idle_date_label_, 8, 0);
     lv_label_set_text(idle_date_label_, "");
-    lv_obj_align_to(idle_date_label_, idle_time_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
-    lv_obj_add_flag(idle_date_label_, LV_OBJ_FLAG_HIDDEN);
 
-    idle_icon_label_ = lv_label_create(screen);
-    lv_obj_set_style_text_font(idle_icon_label_, &font_noto_emoji_30_4, 0);
-    lv_obj_set_style_text_color(idle_icon_label_, bright, 0);
-    lv_label_set_text(idle_icon_label_, "");
-    lv_obj_align(idle_icon_label_, LV_ALIGN_TOP_LEFT, 26, 108);
-    lv_obj_add_flag(idle_icon_label_, LV_OBJ_FLAG_HIDDEN);
+    // Weather icon drawn from shapes: the bundled fonts have no weather glyphs.
+    idle_icon_box_ = lv_obj_create(screen);
+    lv_obj_set_size(idle_icon_box_, 48, 48);
+    lv_obj_set_style_pad_all(idle_icon_box_, 0, 0);
+    lv_obj_set_style_border_width(idle_icon_box_, 0, 0);
+    lv_obj_set_style_bg_opa(idle_icon_box_, LV_OPA_TRANSP, 0);
+    lv_obj_align(idle_icon_box_, LV_ALIGN_TOP_LEFT, 16, 100);
+    lv_obj_add_flag(idle_icon_box_, LV_OBJ_FLAG_HIDDEN);
+
+    // Downloaded PNG icon; drawn shapes below are the fallback.
+    idle_icon_image_obj_ = lv_image_create(idle_icon_box_);
+    lv_obj_set_size(idle_icon_image_obj_, 50, 50);
+    lv_obj_center(idle_icon_image_obj_);
+    lv_obj_add_flag(idle_icon_image_obj_, LV_OBJ_FLAG_HIDDEN);
+
+    idle_icon_sun_ = lv_obj_create(idle_icon_box_);
+    lv_obj_set_size(idle_icon_sun_, 48, 48);
+    lv_obj_set_style_pad_all(idle_icon_sun_, 0, 0);
+    lv_obj_set_style_border_width(idle_icon_sun_, 0, 0);
+    lv_obj_set_style_bg_opa(idle_icon_sun_, LV_OPA_TRANSP, 0);
+    lv_obj_align(idle_icon_sun_, LV_ALIGN_TOP_LEFT, 0, 0);
+    IconShape(idle_icon_sun_, 20, 20, 14, 14, lv_color_hex(0xF59E0B), true);
+    IconShape(idle_icon_sun_, 3, 7, 22, 5, lv_color_hex(0xF59E0B), false);
+    IconShape(idle_icon_sun_, 3, 7, 22, 36, lv_color_hex(0xF59E0B), false);
+    IconShape(idle_icon_sun_, 7, 3, 5, 22, lv_color_hex(0xF59E0B), false);
+    IconShape(idle_icon_sun_, 7, 3, 36, 22, lv_color_hex(0xF59E0B), false);
+
+    idle_icon_cloud_ = lv_obj_create(idle_icon_box_);
+    lv_obj_set_size(idle_icon_cloud_, 48, 48);
+    lv_obj_set_style_pad_all(idle_icon_cloud_, 0, 0);
+    lv_obj_set_style_border_width(idle_icon_cloud_, 0, 0);
+    lv_obj_set_style_bg_opa(idle_icon_cloud_, LV_OPA_TRANSP, 0);
+    lv_obj_align(idle_icon_cloud_, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_color_t cloud = lv_color_hex(0x94A3B8);
+    IconShape(idle_icon_cloud_, 16, 16, 5, 18, cloud, true);
+    IconShape(idle_icon_cloud_, 22, 22, 14, 12, cloud, true);
+    IconShape(idle_icon_cloud_, 14, 14, 30, 20, cloud, true);
+    IconShape(idle_icon_cloud_, 36, 10, 9, 26, cloud, false);
+
+    idle_icon_precip_ = lv_obj_create(idle_icon_box_);
+    lv_obj_set_size(idle_icon_precip_, 48, 48);
+    lv_obj_set_style_pad_all(idle_icon_precip_, 0, 0);
+    lv_obj_set_style_border_width(idle_icon_precip_, 0, 0);
+    lv_obj_set_style_bg_opa(idle_icon_precip_, LV_OPA_TRANSP, 0);
+    lv_obj_align(idle_icon_precip_, LV_ALIGN_TOP_LEFT, 0, 0);
+    IconShape(idle_icon_precip_, 3, 8, 13, 36, lv_color_hex(0x3B82F6), false);
+    IconShape(idle_icon_precip_, 3, 8, 23, 36, lv_color_hex(0x3B82F6), false);
+    IconShape(idle_icon_precip_, 3, 8, 33, 36, lv_color_hex(0x3B82F6), false);
 
     idle_temp_label_ = lv_label_create(screen);
     lv_obj_set_style_text_font(idle_temp_label_, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(idle_temp_label_, bright, 0);
     lv_label_set_text(idle_temp_label_, "");
-    lv_obj_align(idle_temp_label_, LV_ALIGN_TOP_MID, 30, 100);
+    lv_obj_align(idle_temp_label_, LV_ALIGN_TOP_MID, 32, 96);
     lv_obj_add_flag(idle_temp_label_, LV_OBJ_FLAG_HIDDEN);
 
     idle_desc_label_ = lv_label_create(screen);
@@ -485,7 +545,7 @@ void LcdDisplay::CreateIdleUi() {
     lv_obj_set_style_text_align(idle_desc_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(idle_desc_label_, bright, 0);
     lv_label_set_text(idle_desc_label_, "");
-    lv_obj_align(idle_desc_label_, LV_ALIGN_TOP_MID, 0, 152);
+    lv_obj_align(idle_desc_label_, LV_ALIGN_TOP_MID, 0, 140);
     lv_obj_add_flag(idle_desc_label_, LV_OBJ_FLAG_HIDDEN);
 
     idle_detail_label_ = lv_label_create(screen);
@@ -493,45 +553,55 @@ void LcdDisplay::CreateIdleUi() {
     lv_obj_set_style_text_align(idle_detail_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(idle_detail_label_, dim, 0);
     lv_label_set_text(idle_detail_label_, "");
-    lv_obj_align(idle_detail_label_, LV_ALIGN_TOP_MID, 0, 174);
+    lv_obj_align(idle_detail_label_, LV_ALIGN_TOP_MID, 0, 164);
     lv_obj_add_flag(idle_detail_label_, LV_OBJ_FLAG_HIDDEN);
+
+    idle_detail2_label_ = lv_label_create(screen);
+    lv_obj_set_width(idle_detail2_label_, LV_HOR_RES - 16);
+    lv_obj_set_style_text_align(idle_detail2_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(idle_detail2_label_, dim, 0);
+    lv_label_set_text(idle_detail2_label_, "");
+    lv_obj_align(idle_detail2_label_, LV_ALIGN_TOP_MID, 0, 182);
+    lv_obj_add_flag(idle_detail2_label_, LV_OBJ_FLAG_HIDDEN);
 
     idle_hint_label_ = lv_label_create(screen);
     lv_obj_set_width(idle_hint_label_, LV_HOR_RES - 16);
     lv_obj_set_style_text_align(idle_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(idle_hint_label_, dim, 0);
     lv_label_set_text(idle_hint_label_, "");
-    lv_obj_align(idle_hint_label_, LV_ALIGN_TOP_MID, 0, 194);
+    lv_obj_align(idle_hint_label_, LV_ALIGN_TOP_MID, 0, 200);
     lv_obj_add_flag(idle_hint_label_, LV_OBJ_FLAG_HIDDEN);
 
     idle_city_card_ = lv_obj_create(screen);
-    lv_obj_set_size(idle_city_card_, LV_HOR_RES - 32, 28);
+    lv_obj_set_size(idle_city_card_, LV_HOR_RES - 32, 20);
     lv_obj_set_style_radius(idle_city_card_, 8, 0);
-    lv_obj_set_style_bg_color(idle_city_card_, lv_color_hex(0x1F2937), 0);
-    lv_obj_set_style_bg_opa(idle_city_card_, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(idle_city_card_, theme->chat_background_color(), 0);
+    lv_obj_set_style_bg_opa(idle_city_card_, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(idle_city_card_, 0, 0);
     lv_obj_set_style_pad_all(idle_city_card_, 0, 0);
-    lv_obj_align(idle_city_card_, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_align(idle_city_card_, LV_ALIGN_BOTTOM_MID, 0, -2);
     lv_obj_add_flag(idle_city_card_, LV_OBJ_FLAG_HIDDEN);
 
     idle_city_label_ = lv_label_create(idle_city_card_);
     lv_obj_set_width(idle_city_label_, LV_HOR_RES - 40);
     lv_obj_set_style_text_align(idle_city_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(idle_city_label_, dim, 0);
+    lv_obj_set_style_text_color(idle_city_label_, bright, 0);
     lv_label_set_text(idle_city_label_, "");
     lv_obj_center(idle_city_label_);
 }
 
 void LcdDisplay::SetIdleInfo(const IdleScreenInfo& info) {
     DisplayLockGuard lock(this);
-    if (idle_time_label_ == nullptr) return;
+    if (idle_time_row_ == nullptr) return;
 
     lv_obj_t* labels[] = {idle_greeting_label_, idle_time_label_, idle_date_label_,
-                          idle_icon_label_, idle_temp_label_, idle_desc_label_,
-                          idle_detail_label_, idle_hint_label_};
+                          idle_temp_label_, idle_desc_label_, idle_detail_label_,
+                          idle_detail2_label_, idle_hint_label_};
     if (!info.valid || info.time[0] == '\0') {
         for (auto label : labels) SetIdleLabelText(label, nullptr);
-        if (idle_city_card_) lv_obj_add_flag(idle_city_card_, LV_OBJ_FLAG_HIDDEN);
+        SetIdleObjVisible(idle_time_row_, false);
+        SetIdleObjVisible(idle_icon_box_, false);
+        SetIdleObjVisible(idle_city_card_, false);
         if (emoji_box_) lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
         if (status_label_) lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
         ShowEmotion();
@@ -546,22 +616,60 @@ void LcdDisplay::SetIdleInfo(const IdleScreenInfo& info) {
 
     SetIdleLabelText(idle_greeting_label_, info.greeting);
     SetIdleLabelText(idle_time_label_, info.time);
-    // Time width changes with the text; re-anchor the date beside it.
-    if (idle_date_label_ != nullptr) {
-        lv_obj_align_to(idle_date_label_, idle_time_label_, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
-    }
     SetIdleLabelText(idle_date_label_, info.date);
-    SetIdleLabelText(idle_icon_label_, WeatherEmoji(info.weather_code));
+    SetIdleObjVisible(idle_time_row_, true);
     SetIdleLabelText(idle_temp_label_, info.temperature);
     SetIdleLabelText(idle_desc_label_, info.description);
     SetIdleLabelText(idle_detail_label_, info.detail);
+    SetIdleLabelText(idle_detail2_label_, info.detail2);
     SetIdleLabelText(idle_hint_label_, info.hint);
     SetIdleLabelText(idle_city_label_, info.city);
-    if (idle_city_card_) {
-        if (info.city[0] != '\0') {
-            lv_obj_remove_flag(idle_city_card_, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(idle_city_card_, LV_OBJ_FLAG_HIDDEN);
+    SetIdleObjVisible(idle_city_card_, info.city[0] != '\0');
+
+    // Prefer the downloaded PNG icon; fall back to drawn shapes if unavailable.
+    bool image_ok = false;
+    if (!info.icon_png.empty() && info.icon_png != idle_icon_cache_) {
+        idle_icon_image_.reset();
+        size_t len = info.icon_png.size();
+        auto* buf = static_cast<uint8_t*>(heap_caps_malloc(len, MALLOC_CAP_8BIT));
+        if (buf != nullptr) {
+            memcpy(buf, info.icon_png.data(), len);
+            auto image = std::make_unique<LvglAllocatedImage>(buf, len);
+            if (image->IsValid()) {
+                idle_icon_image_ = std::move(image);
+                idle_icon_cache_ = info.icon_png;
+            } else {
+                heap_caps_free(buf);
+                ESP_LOGW(TAG, "Failed to decode downloaded weather icon");
+            }
+        }
+    }
+    if (idle_icon_image_ != nullptr && idle_icon_image_obj_ != nullptr) {
+        lv_image_set_src(idle_icon_image_obj_, idle_icon_image_->image_dsc());
+        lv_obj_remove_flag(idle_icon_image_obj_, LV_OBJ_FLAG_HIDDEN);
+        image_ok = true;
+    } else if (idle_icon_image_obj_ != nullptr) {
+        lv_obj_add_flag(idle_icon_image_obj_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    int code = info.weather_code;
+    bool snow = (code >= 71 && code <= 77) || code == 85 || code == 86;
+    bool storm = code >= 95;
+    bool rain = !snow && !storm && code >= 51;
+    SetIdleObjVisible(idle_icon_box_, code >= 0);
+    SetIdleObjVisible(idle_icon_sun_, !image_ok && (code == 0 || (code >= 1 && code <= 3)));
+    SetIdleObjVisible(idle_icon_cloud_, !image_ok && code >= 1);
+    SetIdleObjVisible(idle_icon_precip_, !image_ok && (rain || snow || storm));
+    if (!image_ok && (rain || snow || storm)) {
+        lv_color_t color = snow ? lv_color_hex(0x93C5FD)
+                                : (storm ? lv_color_hex(0xFBBF24) : lv_color_hex(0x3B82F6));
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t* drop = lv_obj_get_child(idle_icon_precip_, i);
+            if (drop == nullptr) break;
+            lv_obj_set_style_bg_color(drop, color, 0);
+            lv_obj_set_style_radius(drop, snow ? LV_RADIUS_CIRCLE : 0, 0);
+            lv_obj_set_height(drop, storm ? 12 : (snow ? 5 : 8));
+            lv_obj_align(drop, LV_ALIGN_TOP_LEFT, 13 + i * 10, 36);
         }
     }
 }
@@ -1509,8 +1617,8 @@ void LcdDisplay::SetTheme(Theme* theme) {
     lv_obj_set_style_text_color(mute_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_text_color(battery_label_, lvgl_theme->text_color(), 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
-    lv_obj_t* idle_bright[] = {idle_time_label_, idle_icon_label_, idle_temp_label_,
-                               idle_desc_label_};
+    lv_obj_t* idle_bright[] = {idle_time_label_, idle_temp_label_, idle_desc_label_,
+                               idle_city_label_};
     for (auto label : idle_bright) {
         if (label != nullptr) lv_obj_set_style_text_color(label, lvgl_theme->text_color(), 0);
     }

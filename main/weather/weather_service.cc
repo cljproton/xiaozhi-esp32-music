@@ -10,6 +10,8 @@
 #include <cstring>
 #include <chrono>
 #include <thread>
+#include <mutex>
+#include <utility>
 
 #define TAG "WeatherService"
 
@@ -61,6 +63,9 @@ using WeatherCallback = std::function<void(const weather::WeatherInfo&)>;
 WeatherCallback g_callback;
 bool g_running = false;
 TaskHandle_t g_task_handle = nullptr;
+std::mutex g_icon_mutex;
+std::string g_icon_png;
+std::string g_icon_code;
 
 // WMO weather code -> localized description
 const char* WeatherCodeToDesc(int code) {
@@ -147,6 +152,43 @@ std::string HttpGet(const char* url) {
         return "";
     }
     return body;
+}
+
+// WMO code -> OpenWeatherMap icon name (day variants)
+const char* WmoToOwm(int code) {
+    if (code == 0) return "01d";
+    if (code == 1) return "02d";
+    if (code == 2) return "03d";
+    if (code == 3) return "04d";
+    if (code == 45 || code == 48) return "50d";
+    if (code >= 51 && code <= 57) return "09d";
+    if (code >= 61 && code <= 67) return "10d";
+    if (code >= 71 && code <= 77) return "13d";
+    if (code >= 80 && code <= 82) return "10d";
+    if (code >= 85 && code <= 86) return "13d";
+    if (code >= 95) return "11d";
+    return nullptr;
+}
+
+void DownloadIcon(int code) {
+    const char* owm = WmoToOwm(code);
+    if (owm == nullptr) return;
+    {
+        std::lock_guard<std::mutex> lock(g_icon_mutex);
+        if (g_icon_code == owm) return;
+    }
+    char url[128];
+    snprintf(url, sizeof(url), "https://openweathermap.org/img/wn/%s.png", owm);
+    std::string png = HttpGet(url);
+    static const uint8_t kPngMagic[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    if (png.size() < sizeof(kPngMagic) || memcmp(png.data(), kPngMagic, sizeof(kPngMagic)) != 0) {
+        ESP_LOGW(TAG, "Weather icon download failed: %s", url);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_icon_mutex);
+    g_icon_png = std::move(png);
+    g_icon_code = owm;
+    ESP_LOGI(TAG, "Weather icon downloaded: %s (%u bytes)", owm, (unsigned)g_icon_png.size());
 }
 
 // Parse geocoding result
@@ -302,6 +344,7 @@ bool FetchWeather() {
         free(str);
     }
     g_last_weather = info;
+    DownloadIcon(info.weather_code);
     if (g_callback) g_callback(info);
     ESP_LOGI(TAG,
              "Weather updated: %.1f°C %s (high %.0f / low %.0f, humidity %.0f%%, wind %.0f km/h)",
@@ -415,6 +458,11 @@ WeatherInfo GetLastWeather() {
 
 std::string Describe(int weather_code) {
     return WeatherCodeToDesc(weather_code);
+}
+
+std::string GetIconPng() {
+    std::lock_guard<std::mutex> lock(g_icon_mutex);
+    return g_icon_png;
 }
 
 }  // namespace weather

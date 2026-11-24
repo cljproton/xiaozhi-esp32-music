@@ -466,22 +466,13 @@ void Application::Run() {
                                  w.temperature);
                         snprintf(idle.description, sizeof(idle.description), "%s",
                                  weather::Describe(w.weather_code).c_str());
-                        if (w.has_daily || w.has_details) {
-                            if (w.has_daily && w.has_details) {
-                                char high_low[32], details[32];
-                                snprintf(high_low, sizeof(high_low), high_low_fmt,
-                                         w.temp_max, w.temp_min);
-                                snprintf(details, sizeof(details), details_fmt,
-                                         w.humidity, w.wind_speed);
-                                snprintf(idle.detail, sizeof(idle.detail), "%s · %s",
-                                         high_low, details);
-                            } else if (w.has_daily) {
-                                snprintf(idle.detail, sizeof(idle.detail), high_low_fmt,
-                                         w.temp_max, w.temp_min);
-                            } else {
-                                snprintf(idle.detail, sizeof(idle.detail), details_fmt,
-                                         w.humidity, w.wind_speed);
-                            }
+                        if (w.has_daily) {
+                            snprintf(idle.detail, sizeof(idle.detail), high_low_fmt,
+                                     w.temp_max, w.temp_min);
+                        }
+                        if (w.has_details) {
+                            snprintf(idle.detail2, sizeof(idle.detail2), details_fmt,
+                                     w.humidity, w.wind_speed);
                         }
                         snprintf(idle.hint, sizeof(idle.hint), "%s",
                                  IdleWeatherHint(w.weather_code, w.temperature, true));
@@ -505,6 +496,7 @@ void Application::Run() {
                         snprintf(idle.city, sizeof(idle.city), "📍 Locating…");
 #endif
                     }
+                    idle.icon_png = weather::GetIconPng();
                     idle.valid = true;
                     display->SetIdleInfo(idle);
                 }

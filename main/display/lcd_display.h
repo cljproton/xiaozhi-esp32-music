@@ -8,6 +8,7 @@
 #include <esp_lcd_panel_ops.h>
 #include <atomic>
 #include <memory>
+#include <string>
 
 #define PREVIEW_IMAGE_DURATION_MS 5000
 
@@ -25,12 +26,20 @@ protected:
     lv_obj_t* bottom_bar_ = nullptr;
     lv_obj_t* preview_image_ = nullptr;
     lv_obj_t* idle_greeting_label_ = nullptr;
+    lv_obj_t* idle_time_row_ = nullptr;
     lv_obj_t* idle_time_label_ = nullptr;
     lv_obj_t* idle_date_label_ = nullptr;
-    lv_obj_t* idle_icon_label_ = nullptr;
+    lv_obj_t* idle_icon_box_ = nullptr;
+    lv_obj_t* idle_icon_image_obj_ = nullptr;
+    std::unique_ptr<LvglImage> idle_icon_image_ = nullptr;
+    std::string idle_icon_cache_;
+    lv_obj_t* idle_icon_sun_ = nullptr;
+    lv_obj_t* idle_icon_cloud_ = nullptr;
+    lv_obj_t* idle_icon_precip_ = nullptr;
     lv_obj_t* idle_temp_label_ = nullptr;
     lv_obj_t* idle_desc_label_ = nullptr;
     lv_obj_t* idle_detail_label_ = nullptr;
+    lv_obj_t* idle_detail2_label_ = nullptr;
     lv_obj_t* idle_hint_label_ = nullptr;
     lv_obj_t* idle_city_card_ = nullptr;
     lv_obj_t* idle_city_label_ = nullptr;

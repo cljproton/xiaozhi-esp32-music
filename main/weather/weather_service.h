@@ -22,6 +22,9 @@ struct WeatherInfo {
 // Localized description for a WMO weather code.
 std::string Describe(int weather_code);
 
+// Cached PNG icon bytes for the latest weather (empty until downloaded).
+std::string GetIconPng();
+
 // Initialize weather service (starts background task).
 // city: user-configured city name (empty = auto by IP).
 // callback: invoked on each successful update.

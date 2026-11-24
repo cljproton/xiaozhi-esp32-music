@@ -72,8 +72,10 @@ public:
         char temperature[16] = "";
         char description[32] = "";
         char detail[80] = "";
+        char detail2[80] = "";
         char hint[64] = "";
         char city[64] = "";
+        std::string icon_png;
         int weather_code = -1;
         bool valid = false;
     };
