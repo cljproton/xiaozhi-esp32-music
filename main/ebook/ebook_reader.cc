@@ -1,4 +1,5 @@
 #include "ebook_reader.h"
+#include "gb2312_table.h"
 
 #include "board.h"
 
@@ -49,6 +50,62 @@ std::string HttpGet(const std::string& url, const std::string& username,
     }
     esp_http_client_cleanup(client);
     return body;
+}
+
+// Check whether a byte buffer is valid UTF-8.
+static bool IsValidUtf8(const std::string& s) {
+    size_t i = 0;
+    while (i < s.size()) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c < 0x80) { ++i; continue; }
+        int need = 0;
+        uint32_t cp = 0;
+        if ((c & 0xE0) == 0xC0) { need = 1; cp = c & 0x1F; }
+        else if ((c & 0xF0) == 0xE0) { need = 2; cp = c & 0x0F; }
+        else if ((c & 0xF8) == 0xF0) { need = 3; cp = c & 0x07; }
+        else return false;
+        if (i + need >= s.size()) return false;
+        for (int k = 1; k <= need; ++k) {
+            unsigned char cc = static_cast<unsigned char>(s[i + k]);
+            if ((cc & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        i += need + 1;
+    }
+    return true;
+}
+
+static void AppendUtf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) out.push_back(static_cast<char>(cp));
+    else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+// Convert GBK/GB2312 bytes to UTF-8. Bytes in the GB2312 quad-wei range are
+// mapped via the table; ASCII passes through; unmappable bytes become '?'.
+static std::string GbkToUtf8(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() * 2);
+    for (size_t i = 0; i < in.size();) {
+        unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c < 0x80) { out.push_back(static_cast<char>(c)); ++i; continue; }
+        if (c >= 0xA1 && c <= 0xFE && i + 1 < in.size()) {
+            unsigned char c2 = static_cast<unsigned char>(in[i + 1]);
+            if (c2 >= 0xA1 && c2 <= 0xFE) {
+                uint16_t uni = kGb2312Unicode[(c - 0xA1) * 94 + (c2 - 0xA1)];
+                if (uni != 0) { AppendUtf8(out, uni); i += 2; continue; }
+            }
+        }
+        out.push_back('?');
+        ++i;
+    }
+    return out;
 }
 
 uint16_t Rd16(const std::string& s, size_t p) {
@@ -210,6 +267,10 @@ EbookBook EbookLoad(const std::string& url, const std::string& username,
         return book;
     }
     ESP_LOGI(TAG, "Downloaded book %u bytes", (unsigned)data.size());
+    if (!IsValidUtf8(data)) {
+        data = GbkToUtf8(data);
+        ESP_LOGI(TAG, "Converted GBK book to UTF-8 (%u bytes)", (unsigned)data.size());
+    }
     std::string lower = url;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
