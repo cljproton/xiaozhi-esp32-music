@@ -23,10 +23,17 @@ button:disabled{opacity:.4}
 .row{display:flex;gap:8px;align-items:center}
 .row>*{flex:1}
 .hint{font-size:12px;color:var(--dim);line-height:1.6}
-.msg{font-size:12px;margin-top:8px;min-height:16px;color:#4ade80}
+.msg{font-size:12px;margin-top:8px;min-height:16px;color:#94a3b8}
+.msg.ok{color:#4ade80}
+.msg.err{color:#f88}
+.msg.info{color:#94a3b8}
 .book-item{display:flex;align-items:center;gap:8px;padding:10px;border-bottom:1px solid var(--line);cursor:pointer}
 .book-item:hover{background:rgba(34,211,238,.08)}
 .book-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.book-item .prog{font-size:11px;color:var(--dim);flex:none}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0}
+.pager span{font-size:.8rem;color:var(--dim)}
+.pager button{padding:6px 12px;font-size:.85rem}
 .player{position:fixed;left:0;right:0;bottom:0;background:rgba(7,11,20,.9);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -8px 30px rgba(0,0,0,.5)}
 .player>.inner{max-width:560px;margin:0 auto}
 .np-title{font-size:.95rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px}
@@ -48,6 +55,7 @@ button:disabled{opacity:.4}
     <div class="hint">支持 TXT（UTF-8）与 EPUB；PDF/MOBI 不支持。</div>
     <div class="row" style="margin-top:10px"><button id="btn-load">加载书目</button></div>
     <div id="book-list"></div>
+    <div class="pager"><button id="book-prev">上一页</button><span id="book-page">-</span><button id="book-next">下一页</button></div>
     <div class="msg" id="book-msg"></div>
   </div>
 
@@ -85,16 +93,21 @@ button:disabled{opacity:.4}
 const $=id=>document.getElementById(id);
 async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{'Content-Type':'application/json'}});if(r.status===401)location.replace('/login?next=/book');return r.json().catch(()=>({}))}
 const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const setMsg=(id,text,kind)=>{const el=$(id);el.textContent=text;el.className='msg'+(kind?' '+kind:'')};
 let voices=[];
-async function loadTts(){const d=await api('/api/ebook/tts-config');$('tts-provider').value=d.provider||'edge';voices=d.voices||[];$('tts-voice').innerHTML=voices.map(v=>'<option>'+v+'</option>').join('');$('tts-voice').value=d.voice||voices[0]||'';$('tts-speed').value=d.speed||0;$('speed-val').textContent=d.speed||0;$('tts-url').value=d.url||'';$('tts-key').value=d.api_key||'';toggleHttp()}
+async function loadTts(){const d=await api('/api/ebook/tts-config');$('tts-provider').value=d.provider||'edge';voices=d.voices||[];$('tts-voice').innerHTML=voices.map(v=>'<option>'+v+'</option>').join('');$('tts-voice').value=d.voice||voices[0]||'';$('tts-speed').value=d.speed||0;$('speed-val').textContent=d.speed||0;$('tts-url').value=d.url||'';$('tts-key').value=d.api_key||'';if(d.source_url){$('book-url').value=d.source_url}$('book-user').value=d.source_user||'';$('book-pass').value=d.source_pass||'';toggleHttp()}
 function toggleHttp(){$('http-cfg').classList.toggle('hidden',$('tts-provider').value!=='http')}
 $('tts-provider').addEventListener('change',toggleHttp);
 $('tts-speed').addEventListener('input',()=>$('speed-val').textContent=$('tts-speed').value);
-$('btn-tts-save').addEventListener('click',async()=>{const d=await api('/api/ebook/tts-config',{method:'POST',body:JSON.stringify({provider:$('tts-provider').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value),url:$('tts-url').value,api_key:$('tts-key').value})});$('tts-msg').textContent=d.status==='ok'?'已保存':'保存失败'});
+$('btn-tts-save').addEventListener('click',async()=>{setMsg('tts-msg','保存中…','info');const d=await api('/api/ebook/tts-config',{method:'POST',body:JSON.stringify({provider:$('tts-provider').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value),url:$('tts-url').value,api_key:$('tts-key').value,source_url:$('book-url').value.trim(),source_user:$('book-user').value,source_pass:$('book-pass').value})});setMsg('tts-msg',d.status==='ok'?'已保存':'保存失败',d.status==='ok'?'ok':'err');setTimeout(()=>setMsg('tts-msg',''),3000)});
 async function loadStatus(){const d=await api('/api/ebook/status');$('np-title').textContent=d.active?(d.book||'播放中')+(d.total?(' · 第'+(d.paragraph+1)+'/'+d.total+'段'):''):'未播放';$('pg-cur').textContent=d.paragraph||0;$('pg-total').textContent=d.total||0;$('pg').max=d.total||1;$('pg').value=d.paragraph||0;$('btn-toggle').textContent=d.paused?'继续':(d.active?'暂停':'播放')}
-function playBook(url){api('/api/ebook/play',{method:'POST',body:JSON.stringify({url:url,username:$('book-user').value,password:$('book-pass').value})}).then(d=>{$('book-msg').textContent=d.status==='ok'?'已开始播放':'加载失败';loadStatus()})}
-$('btn-load').addEventListener('click',async()=>{$('book-msg').textContent='加载中…';const d=await api('/api/ebook/list',{method:'POST',body:JSON.stringify({url:$('book-url').value.trim(),username:$('book-user').value,password:$('book-pass').value})});if(d.status!=='ok'){$('book-msg').textContent=d.error||'加载失败';return}const books=d.books||[];$('book-msg').textContent=books.length?('找到 '+books.length+' 本书'):'未找到 TXT/EPUB';$('book-list').innerHTML=books.map(b=>'<div class="book-item" data-url="'+esc(b.url)+'"><span class="name">📖 '+esc(b.name)+'</span><button>播放</button></div>').join('');$('book-list').querySelectorAll('.book-item').forEach(el=>{el.addEventListener('click',()=>playBook(el.dataset.url));el.querySelector('button').addEventListener('click',e=>{e.stopPropagation();playBook(el.dataset.url)})})});
-$('btn-tts-test').addEventListener('click',async()=>{const d=await api('/api/ebook/tts-test',{method:'POST',body:JSON.stringify({text:$('tts-test-text').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value)})});$('tts-test-msg').textContent=d.status==='ok'?'试听中…':(d.error||'测试失败')});
+let allBooks=[];let bookPage=1;const PAGE_SIZE=20;
+function renderBooks(){const pages=Math.max(1,Math.ceil(allBooks.length/PAGE_SIZE));if(bookPage>pages)bookPage=pages;const start=(bookPage-1)*PAGE_SIZE;const list=allBooks.slice(start,start+PAGE_SIZE);$('book-list').innerHTML=list.map(b=>'<div class="book-item" data-url="'+esc(b.url)+'"><span class="name">📖 '+esc(b.name)+'</span>'+(b.progress>0?'<span class="prog">已读 '+b.progress+' 段</span>':'')+'<button>播放</button></div>').join('');$('book-list').querySelectorAll('.book-item').forEach(el=>{el.addEventListener('click',()=>playBook(el.dataset.url));el.querySelector('button').addEventListener('click',e=>{e.stopPropagation();playBook(el.dataset.url)})});$('book-page').textContent=bookPage+'/'+pages+' · '+allBooks.length+' 本';$('book-prev').disabled=bookPage<=1;$('book-next').disabled=bookPage>=pages}
+$('book-prev').addEventListener('click',()=>{if(bookPage>1){bookPage--;renderBooks()}});
+$('book-next').addEventListener('click',()=>{bookPage++;renderBooks()});
+function playBook(url){setMsg('book-msg','加载中…','info');api('/api/ebook/play',{method:'POST',body:JSON.stringify({url:url,username:$('book-user').value,password:$('book-pass').value})}).then(d=>{setMsg('book-msg',d.status==='ok'?'已开始播放':'加载失败',d.status==='ok'?'ok':'err');loadStatus();if(d.status==='ok')setTimeout(()=>setMsg('book-msg',''),3000)})}
+$('btn-load').addEventListener('click',async()=>{setMsg('book-msg','加载中…','info');const d=await api('/api/ebook/list',{method:'POST',body:JSON.stringify({url:$('book-url').value.trim(),username:$('book-user').value,password:$('book-pass').value})});if(d.status!=='ok'){setMsg('book-msg',d.error||'加载失败','err');return}allBooks=d.books||[];bookPage=1;renderBooks();setMsg('book-msg',allBooks.length?('找到 '+allBooks.length+' 本书'):'未找到 TXT/EPUB','info')});
+$('btn-tts-test').addEventListener('click',async()=>{setMsg('tts-test-msg','合成中…','info');const d=await api('/api/ebook/tts-test',{method:'POST',body:JSON.stringify({text:$('tts-test-text').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value)})});if(d.status!=='ok'){setMsg('tts-test-msg',d.error||'测试失败','err');return}setMsg('tts-test-msg','试听中…','info');setTimeout(()=>setMsg('tts-test-msg',''),4000)});
 $('btn-toggle').addEventListener('click',async()=>{const d=await api('/api/ebook/status');await api(d.active?(d.paused?'/api/ebook/resume':'/api/ebook/pause'):'/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-stop').addEventListener('click',async()=>{await api('/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-next').addEventListener('click',async()=>{await api('/api/ebook/next',{method:'POST'});loadStatus()});

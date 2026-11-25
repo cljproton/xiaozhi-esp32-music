@@ -34,6 +34,8 @@
 #endif
 #include "weather/weather_service.h"
 #include "ebook/ebook_player.h"
+#include "handlers/ebook_api_handler.h"
+#include "settings.h"
 
 #define TAG "MCP"
 
@@ -515,14 +517,70 @@ void McpServer::AddCommonTools() {
 #endif  // CONFIG_USE_RADIO
 
     // E-book (TTS) playback tools
-    AddTool("ebook.play", "朗读 WebDAV 上的电子书（TXT/EPUB）。url 为完整文件地址，可选 username/password。",
-            PropertyList({Property("url", kPropertyTypeString),
+    AddTool("ebook.list", "列出 WebDAV 书源中的电子书（TXT/EPUB），返回书名列表。不传参数时使用网页端保存的书源。",
+            PropertyList({Property("url", kPropertyTypeString, ""),
                           Property("username", kPropertyTypeString, ""),
                           Property("password", kPropertyTypeString, "")}),
             [](const PropertyList& properties) -> ReturnValue {
-                auto url = properties["url"].value<std::string>();
-                auto user = properties["username"].value<std::string>();
-                auto pass = properties["password"].value<std::string>();
+                Settings src("ebook", false);
+                std::string url = properties["url"].value<std::string>();
+                std::string user = properties["username"].value<std::string>();
+                std::string pass = properties["password"].value<std::string>();
+                if (url.empty()) url = src.GetString("source_url", "");
+                if (user.empty()) user = src.GetString("source_user", "");
+                if (pass.empty()) pass = src.GetString("source_pass", "");
+                if (url.empty()) return std::string("未配置书源，请先在网页端 /book 保存或在参数中提供 url");
+                std::string error;
+                cJSON* books = ebook_api::ListSourceBooks(url, user, pass, error);
+                if (books == nullptr) return std::string("列出书目失败: ") + error;
+                cJSON* res = cJSON_CreateObject();
+                cJSON_AddStringToObject(res, "status", "ok");
+                cJSON_AddItemToObject(res, "books", books);
+                return res;
+            });
+    AddTool("ebook.play", "朗读电子书（TXT/EPUB）。可用 name 模糊匹配书名（不传 url 时使用网页端保存的书源），或直接用 url 指定完整文件地址。",
+            PropertyList({Property("name", kPropertyTypeString, ""),
+                          Property("url", kPropertyTypeString, ""),
+                          Property("username", kPropertyTypeString, ""),
+                          Property("password", kPropertyTypeString, "")}),
+            [](const PropertyList& properties) -> ReturnValue {
+                Settings src("ebook", false);
+                std::string name = properties["name"].value<std::string>();
+                std::string url = properties["url"].value<std::string>();
+                std::string user = properties["username"].value<std::string>();
+                std::string pass = properties["password"].value<std::string>();
+                if (user.empty()) user = src.GetString("source_user", "");
+                if (pass.empty()) pass = src.GetString("source_pass", "");
+
+                // Fuzzy match by book name: resolve to a full URL from the source.
+                if (url.empty() && !name.empty()) {
+                    std::string source_url = src.GetString("source_url", "");
+                    if (source_url.empty()) return std::string("未配置书源，请先在网页端 /book 保存");
+                    std::string error;
+                    cJSON* books = ebook_api::ListSourceBooks(source_url, user, pass, error);
+                    if (books == nullptr) return std::string("列出书目失败: ") + error;
+                    std::string lower_name = name;
+                    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+                    std::string matched_url;
+                    int matches = 0;
+                    for (int i = 0; i < cJSON_GetArraySize(books); ++i) {
+                        cJSON* b = cJSON_GetArrayItem(books, i);
+                        auto* u = cJSON_GetObjectItem(b, "url");
+                        auto* n = cJSON_GetObjectItem(b, "name");
+                        if (!cJSON_IsString(u) || !cJSON_IsString(n)) continue;
+                        std::string bn = n->valuestring;
+                        std::transform(bn.begin(), bn.end(), bn.begin(), ::tolower);
+                        if (bn.find(lower_name) != std::string::npos) {
+                            matched_url = u->valuestring;
+                            ++matches;
+                        }
+                    }
+                    cJSON_Delete(books);
+                    if (matches == 0) return std::string("未找到匹配书名: ") + name;
+                    if (matches > 1) return std::string("书名匹配到多本书，请更精确或直接用 url");
+                    url = matched_url;
+                }
+                if (url.empty()) return std::string("请提供 name 或 url");
                 if (!Application::GetInstance().PlayEbook(url, user, pass)) {
                     return std::string("无法加载或播放电子书");
                 }

@@ -5,14 +5,21 @@
 #include "ebook/ebook_player.h"
 #include "tts/tts_client.h"
 #include "mcp_server.h"
+#include "settings.h"
 #include "cjson_utils.h"
 
 #include <esp_http_server.h>
 #include <cJSON.h>
+#include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
+
+namespace ebook_api {
+cJSON* ListSourceBooks(const std::string& dir_url, const std::string& username,
+                       const std::string& password, std::string& error);
+}
 
 namespace {
 
@@ -74,49 +81,11 @@ esp_err_t HandleList(httpd_req_t* req) {
     }
     std::string u = cJSON_IsString(user) ? user->valuestring : "";
     std::string p = cJSON_IsString(pass) ? pass->valuestring : "";
-
-    // Split the directory URL into origin + path for ListWebdav.
-    std::string full = url->valuestring;
-    size_t scheme = full.find("://");
-    size_t slash = scheme == std::string::npos ? std::string::npos : full.find('/', scheme + 3);
-    std::string origin = slash == std::string::npos ? full : full.substr(0, slash);
-    std::string path = slash == std::string::npos ? "/" : full.substr(slash);
-    if (!path.empty() && path.back() != '/') path += '/';
-
-    cJSON* src = cJSON_CreateObject();
-    cJSON_AddStringToObject(src, "type", "webdav");
-    cJSON_AddStringToObject(src, "base_url", origin.c_str());
-    cJSON_AddStringToObject(src, "username", u.c_str());
-    cJSON_AddStringToObject(src, "password", p.c_str());
-    cJSON_AddStringToObject(src, "path", path.c_str());
-    char* src_str = cJSON_PrintUnformatted(src);
-    cJSON_Delete(src);
-    auto listing = McpServer::GetInstance().ListWebdav(src_str ? src_str : "{}");
-    free(src_str);
+    std::string error;
+    cJSON* books = ebook_api::ListSourceBooks(url->valuestring, u, p, error);
     cJSON_Delete(root);
-    if (!listing) return SendError(req, "502 Bad Gateway", listing.error().c_str());
+    if (books == nullptr) return SendError(req, "502 Bad Gateway", error.c_str());
 
-    cJSON* entries = cJSON_Parse(listing->c_str());
-    cJSON* books = cJSON_CreateArray();
-    if (entries && cJSON_IsArray(entries)) {
-        for (int i = 0; i < cJSON_GetArraySize(entries); ++i) {
-            cJSON* e = cJSON_GetArrayItem(entries, i);
-            if (!cJSON_IsString(e) || !e->valuestring) continue;
-            std::string href = e->valuestring;
-            size_t dot = href.find_last_of('.');
-            if (dot == std::string::npos) continue;
-            std::string ext = href.substr(dot);
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext != ".txt" && ext != ".epub") continue;
-            cJSON* item = cJSON_CreateObject();
-            std::string file_url = origin + href;
-            cJSON_AddStringToObject(item, "url", file_url.c_str());
-            std::string name = href.substr(href.find_last_of('/') + 1);
-            cJSON_AddStringToObject(item, "name", name.c_str());
-            cJSON_AddItemToArray(books, item);
-        }
-    }
-    if (entries) cJSON_Delete(entries);
     cJSON* res = cJSON_CreateObject();
     cJSON_AddStringToObject(res, "status", "ok");
     cJSON_AddItemToObject(res, "books", books);
@@ -178,6 +147,10 @@ esp_err_t HandleTtsConfigGet(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "speed", TtsGetSpeed());
     cJSON_AddStringToObject(root, "url", TtsGetHttpUrl().c_str());
     cJSON_AddStringToObject(root, "api_key", TtsGetApiKey().c_str());
+    Settings src("ebook", false);
+    cJSON_AddStringToObject(root, "source_url", src.GetString("source_url", "").c_str());
+    cJSON_AddStringToObject(root, "source_user", src.GetString("source_user", "").c_str());
+    cJSON_AddStringToObject(root, "source_pass", src.GetString("source_pass", "").c_str());
     cJSON* arr = cJSON_CreateArray();
     for (size_t i = 0; i < count; ++i) cJSON_AddItemToArray(arr, cJSON_CreateString(voices[i]));
     cJSON_AddItemToObject(root, "voices", arr);
@@ -200,6 +173,15 @@ esp_err_t HandleTtsConfigPost(httpd_req_t* req) {
     if (cJSON_IsNumber(speed)) TtsSetSpeed(speed->valueint);
     if (cJSON_IsString(url)) TtsSetHttpUrl(url->valuestring);
     if (cJSON_IsString(key)) TtsSetApiKey(key->valuestring);
+    auto s_url = cJSON_GetObjectItem(root, "source_url");
+    auto s_user = cJSON_GetObjectItem(root, "source_user");
+    auto s_pass = cJSON_GetObjectItem(root, "source_pass");
+    if (cJSON_IsString(s_url) || cJSON_IsString(s_user) || cJSON_IsString(s_pass)) {
+        Settings src("ebook", true);
+        if (cJSON_IsString(s_url)) src.SetString("source_url", s_url->valuestring);
+        if (cJSON_IsString(s_user)) src.SetString("source_user", s_user->valuestring);
+        if (cJSON_IsString(s_pass)) src.SetString("source_pass", s_pass->valuestring);
+    }
     cJSON_Delete(root);
     cJSON* res = cJSON_CreateObject();
     cJSON_AddStringToObject(res, "status", "ok");
@@ -230,6 +212,58 @@ esp_err_t HandleTtsTest(httpd_req_t* req) {
 }  // namespace
 
 namespace ebook_api {
+
+cJSON* ListSourceBooks(const std::string& full, const std::string& u,
+                       const std::string& p, std::string& error) {
+    size_t scheme = full.find("://");
+    size_t slash = scheme == std::string::npos ? std::string::npos : full.find('/', scheme + 3);
+    std::string origin = slash == std::string::npos ? full : full.substr(0, slash);
+    std::string path = slash == std::string::npos ? "/" : full.substr(slash);
+    if (!path.empty() && path.back() != '/') path += '/';
+
+    cJSON* src = cJSON_CreateObject();
+    cJSON_AddStringToObject(src, "type", "webdav");
+    cJSON_AddStringToObject(src, "base_url", origin.c_str());
+    cJSON_AddStringToObject(src, "username", u.c_str());
+    cJSON_AddStringToObject(src, "password", p.c_str());
+    cJSON_AddStringToObject(src, "path", path.c_str());
+    char* src_str = cJSON_PrintUnformatted(src);
+    cJSON_Delete(src);
+    auto listing = McpServer::GetInstance().ListWebdav(src_str ? src_str : "{}");
+    free(src_str);
+    if (!listing) {
+        error = listing.error();
+        return nullptr;
+    }
+    cJSON* entries = cJSON_Parse(listing->c_str());
+    cJSON* books = cJSON_CreateArray();
+    if (entries && cJSON_IsArray(entries)) {
+        for (int i = 0; i < cJSON_GetArraySize(entries); ++i) {
+            cJSON* e = cJSON_GetArrayItem(entries, i);
+            if (!cJSON_IsString(e) || !e->valuestring) continue;
+            std::string href = e->valuestring;
+            size_t dot = href.find_last_of('.');
+            if (dot == std::string::npos) continue;
+            std::string ext = href.substr(dot);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext != ".txt" && ext != ".epub") continue;
+            cJSON* item = cJSON_CreateObject();
+            std::string file_url = origin + href;
+            cJSON_AddStringToObject(item, "url", file_url.c_str());
+            cJSON_AddStringToObject(item, "name", href.substr(href.find_last_of('/') + 1).c_str());
+            // Reading progress (paragraph index) stored by EbookPlayer.
+            uint32_t h = 2166136261u;
+            for (unsigned char c : file_url) { h ^= c; h *= 16777619u; }
+            char key[16];
+            snprintf(key, sizeof(key), "%08lx", (unsigned long)h);
+            Settings prog("ebook", false);
+            cJSON_AddNumberToObject(item, "progress", prog.GetInt(key, 0));
+            cJSON_AddItemToArray(books, item);
+        }
+    }
+    if (entries) cJSON_Delete(entries);
+    return books;
+}
 
 void RegisterHandlers(HandlerRegistry& registry) {
     registry.Register({"/api/ebook/list", HTTP_POST, HandleList, nullptr}, "Ebook list");

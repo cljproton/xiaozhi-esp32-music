@@ -47,6 +47,7 @@ private:
     std::atomic<bool> paused_{false};
     std::atomic<bool> stopping_{false};
     EbookBook book_;
+    std::string book_url_;
     size_t paragraph_ = 0;
     std::string username_;
     std::string password_;

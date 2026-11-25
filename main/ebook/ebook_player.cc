@@ -2,6 +2,7 @@
 #include "application.h"
 #include "board.h"
 #include "tts/tts_client.h"
+#include "settings.h"
 #include <esp_audio_simple_dec_default.h>
 
 #include <algorithm>
@@ -20,6 +21,28 @@ EbookPlayer& EbookPlayer::GetInstance() {
 
 EbookPlayer::EbookPlayer() = default;
 
+// FNV-1a hash of the book URL -> short NVS key (8 hex chars, within the 15-char limit).
+static std::string BookKey(const std::string& url) {
+    uint32_t h = 2166136261u;
+    for (unsigned char c : url) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%08lx", (unsigned long)h);
+    return std::string(buf);
+}
+
+static int LoadProgress(const std::string& url) {
+    Settings s("ebook", false);
+    return s.GetInt(BookKey(url).c_str(), 0);
+}
+
+static void SaveProgress(const std::string& url, int paragraph) {
+    Settings s("ebook", true);
+    s.SetInt(BookKey(url).c_str(), paragraph);
+}
+
 bool EbookPlayer::Play(const std::string& url, const std::string& username,
                        const std::string& password) {
     if (active_) Stop();
@@ -29,9 +52,14 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
         return false;
     }
     book_ = std::move(book);
+    book_url_ = url;
     username_ = username;
     password_ = password;
-    paragraph_ = 0;
+    int saved = LoadProgress(url);
+    paragraph_ = (saved > 0 && static_cast<size_t>(saved) < book_.paragraphs.size())
+                     ? static_cast<size_t>(saved) : 0;
+    ESP_LOGI(TAG, "Resume '%s' from paragraph %u/%u", book_.name.c_str(),
+             (unsigned)paragraph_, (unsigned)book_.paragraphs.size());
     active_ = true;
     paused_ = false;
     stopping_ = false;
@@ -68,6 +96,7 @@ bool EbookPlayer::Resume() {
 bool EbookPlayer::Next() {
     if (!active_ || paragraph_ + 1 >= book_.paragraphs.size()) return false;
     ++paragraph_;
+    if (!book_url_.empty()) SaveProgress(book_url_, static_cast<int>(paragraph_));
     stopping_ = true;  // interrupt current decode loop; synth task advances
     return true;
 }
@@ -120,6 +149,19 @@ bool EbookPlayer::PlayStream() {
     int sample_rate = 24000, channels = 1;
     bool got_info = false;
     bool ok = true;
+    // Accumulate decoded PCM into reasonably sized batches. Pushing one tiny
+    // frame (576 samples) at a time starves the 2-slot playback queue and
+    // causes audible crackling.
+    constexpr size_t kBatchSamples = 12000;  // ~0.5s at 24kHz
+    std::vector<int16_t> batch;
+    batch.reserve(kBatchSamples);
+    auto flush_batch = [&]() {
+        if (batch.empty() || stopping_) return;
+        auto& svc = Application::GetInstance().GetAudioService();
+        svc.PushPcmPlaybackTask(std::move(batch), sample_rate, channels, ++pcm_id, 0);
+        batch.clear();
+        batch.reserve(kBatchSamples);
+    };
     while (active_ && !stopping_ && offset < stream_data_.size()) {
         esp_audio_simple_dec_raw_t raw = {};
         raw.buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(stream_data_.data() + offset));
@@ -131,7 +173,6 @@ bool EbookPlayer::PlayStream() {
         esp_audio_err_t ret = esp_audio_simple_dec_process(dec, &raw, &out);
         offset += raw.consumed;
         if (raw.consumed == 0 && ret != ESP_AUDIO_ERR_OK) {
-            // No progress: avoid an infinite loop on malformed data.
             ESP_LOGW(TAG, "decode no progress at %u (ret %d)", (unsigned)offset, ret);
             break;
         }
@@ -141,20 +182,21 @@ bool EbookPlayer::PlayStream() {
             break;
         }
         if (out.decoded_size > 0 && !stopping_) {
-            esp_audio_simple_dec_info_t info;
-            if (esp_audio_simple_dec_get_info(dec, &info) == ESP_AUDIO_ERR_OK) {
-                sample_rate = info.sample_rate;
-                channels = info.channel;
-                got_info = true;
+            if (!got_info) {
+                esp_audio_simple_dec_info_t info;
+                if (esp_audio_simple_dec_get_info(dec, &info) == ESP_AUDIO_ERR_OK) {
+                    sample_rate = info.sample_rate;
+                    channels = info.channel;
+                    got_info = true;
+                }
             }
-            auto& svc = Application::GetInstance().GetAudioService();
-            svc.PushPcmPlaybackTask(
-                std::vector<int16_t>(reinterpret_cast<int16_t*>(out_buf),
-                                     reinterpret_cast<int16_t*>(out_buf) +
-                                         out.decoded_size / sizeof(int16_t)),
-                sample_rate, channels, ++pcm_id, 0);
+            auto* pcm = reinterpret_cast<const int16_t*>(out_buf);
+            size_t samples = out.decoded_size / sizeof(int16_t);
+            batch.insert(batch.end(), pcm, pcm + samples);
+            if (batch.size() >= kBatchSamples) flush_batch();
         }
     }
+    flush_batch();
 
     free(out_buf);
     esp_audio_simple_dec_close(dec);
@@ -236,4 +278,5 @@ void EbookPlayer::SynthesizeAndPlay() {
         return;
     }
     ++paragraph_;
+    if (!book_url_.empty()) SaveProgress(book_url_, static_cast<int>(paragraph_));
 }
