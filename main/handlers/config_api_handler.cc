@@ -66,7 +66,7 @@ button:disabled{opacity:0.4;cursor:default}
       <input id="sleep-off-at" type="time" step="60">
       <label for="sleep-off-min">空闲多少分钟后关机 (0=不关机)</label>
       <input id="sleep-off-min" type="number" min="0" max="1440" step="1" placeholder="例如 60">
-      <div class="hint">• 到点关机：每天固定时刻断电（充电时也会关机）<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时</div>
+      <div class="hint">• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行</div>
     </div>
     <button id="btn-sleep" type="button" style="margin-top:10px">保存睡眠设置</button>
     <div id="msg-sleep"></div>
