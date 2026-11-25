@@ -1,7 +1,6 @@
 #include "config_api_handler.h"
 
 #include "web_auth.h"
-#include "weather/weather_service.h"
 #include "settings.h"
 #include "cjson_utils.h"
 
@@ -72,19 +71,10 @@ button:disabled{opacity:0.4;cursor:default}
     <button id="btn-sleep" type="button" style="margin-top:10px">保存睡眠设置</button>
     <div id="msg-sleep"></div>
   </div>
-
-
-  <div class="card">
-    <h2>待机天气</h2>
-    <label for="weather-city">城市名称（留空=按 IP 自动定位）</label>
-    <input id="weather-city" type="text" placeholder="例如：北京、Shanghai、Tokyo">
-    <button id="btn-weather" type="button">保存城市</button>
-    <div id="msg-weather"></div>
-  </div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
-const T={pwd:{ok:'密码已修改',fail:'修改失败，请检查当前密码'},sleep:{ok:'睡眠设置已保存',fail:'保存失败'},weather:{ok:'城市已保存',fail:'保存失败'}};
+const T={pwd:{ok:'密码已修改',fail:'修改失败，请检查当前密码'},sleep:{ok:'睡眠设置已保存',fail:'保存失败'}};
 
 async function api(path, opt={}) {
   const r=await fetch(path,{...opt,headers:{'Content-Type':'application/json',...(opt.headers||{})}});
@@ -126,17 +116,6 @@ $('btn-sleep').addEventListener('click',async()=>{
   showMsg('msg-sleep',d.status==='ok'?T.sleep.ok:T.sleep.fail,d.status==='ok');
 });
 loadSleep();
-
-// Weather city
-async function loadWeather(){
-  const d=await api('/api/config');
-  if(d.weather_city!==undefined) $('weather-city').value=d.weather_city||'';
-}
-$('btn-weather').addEventListener('click',async()=>{
-  const d=await api('/api/config',{method:'POST',body:JSON.stringify({weather_city:$('weather-city').value.trim()})});
-  showMsg('msg-weather',d.status==='ok'?T.weather.ok:T.weather.fail,d.status==='ok');
-});
-loadWeather();
 </script>
 </body>
 </html>)HTML";
@@ -190,15 +169,11 @@ esp_err_t HandleConfigGet(httpd_req_t* req) {
     int sleep_off_min = settings.GetInt("sleep_off_min", 0);  // 0 = disabled (default)
     int sleep_off_at = settings.GetInt("sleep_off_at", -1);  // minutes from midnight, -1=disabled
 
-    Settings wns("weather", false);
-    std::string city = wns.GetString("city", "");
-
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status", "ok");
     cJSON_AddBoolToObject(root, "sleep_mode", sleep_mode);
     cJSON_AddNumberToObject(root, "sleep_off_min", sleep_off_min);
     cJSON_AddNumberToObject(root, "sleep_off_at", sleep_off_at);
-    cJSON_AddStringToObject(root, "weather_city", city.c_str());
     return SendJson(req, root);
 }
 
@@ -234,12 +209,6 @@ esp_err_t HandleConfigPost(httpd_req_t* req) {
             Settings settings("wifi", true);
             settings.SetInt("sleep_off_min", val);
         }
-    }
-
-    // weather_city
-    item = cJSON_GetObjectItem(root, "weather_city");
-    if (cJSON_IsString(item)) {
-        weather::SetCity(item->valuestring ? item->valuestring : "");
     }
 
     cJSON_Delete(root);

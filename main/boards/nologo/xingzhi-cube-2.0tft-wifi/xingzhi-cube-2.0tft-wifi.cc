@@ -115,15 +115,16 @@ private:
                 app.Schedule([]() { Application::GetInstance().StopRadio(); });
                 return;
             }
-            // 播放中按一下暂停（Web 端轮询状态会同步显示暂停）；
-            // 已暂停时再按一下停止播放，把麦克风交还。
+            // 播放中按一下暂停（会话保留）；已暂停时再按一下打开 AI 对话，
+            // 暂停的音乐会话保留，对话结束后可由 AI 侧 self.music.resume 恢复。
             if (app.GetDeviceState() == kDeviceStateNotifying) {
                 app.Schedule([]() {
                     auto& app = Application::GetInstance();
-                    if (app.GetMusicStatus().paused) {
-                        app.StopMusicPlayback();
-                    } else {
+                    if (!app.GetMusicStatus().paused) {
                         app.PauseMusic();
+                    } else {
+                        app.StopNotification(true);  // 回 idle，保留暂停快照
+                        app.ToggleChatState();       // 打开 AI 对话
                     }
                 });
                 return;

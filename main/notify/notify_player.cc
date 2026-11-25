@@ -959,20 +959,37 @@ void NotifyPlayer::WorkerTask() {
     FinishedCallback callback;
     uint32_t completed_playback_id = 0;
     bool report_success = false;
-    {
+    if (success) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            worker_running_ = false;
+            task_handle_ = nullptr;
+            http_finished_ = true;
+        }
+        // GMF can report FINISHED before the audio output drains. Give the
+        // drain event a short window; OnPlaybackDrained() completes the
+        // callback if it arrives. Some streams never drain, so fall back to
+        // reporting success so the playlist advances.
+        for (int i = 0; i < 20; ++i) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (playback_drained_ || cancelled_ || !active_ || playback_id != playback_id_) {
+                    break;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!cancelled_ && active_ && playback_id == playback_id_ && !completion_reported_) {
+            callback = CompleteLocked(completed_playback_id);
+            report_success = true;
+        }
+    } else {
         std::lock_guard<std::mutex> lock(mutex_);
         worker_running_ = false;
         task_handle_ = nullptr;
         if (!cancelled_ && active_ && playback_id == playback_id_) {
-            if (!success) {
-                callback = CompleteLocked(completed_playback_id);
-            } else {
-                http_finished_ = true;
-                if (playback_drained_) {
-                    callback = CompleteLocked(completed_playback_id);
-                    report_success = true;
-                }
-            }
+            callback = CompleteLocked(completed_playback_id);
         }
     }
     if (callback) {
