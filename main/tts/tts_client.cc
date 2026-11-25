@@ -247,6 +247,10 @@ bool EdgeSynthesize(const TtsRequest& req) {
     ESP_LOGI(TAG, "Edge TTS result: %s (%u audio bytes)", ok ? "ok" : "failed",
              (unsigned)ctx.buffer.size());
     if (ok && !ctx.buffer.empty() && req.on_audio) {
+        // Edge TTS starts with an MPEG2 0xFFF3 frame; GMF's MP3 type detector
+        // only recognizes ID3 or MPEG1 sync, so prepend a minimal ID3v2 tag.
+        static const uint8_t kId3Header[10] = {'I', 'D', '3', 3, 0, 0, 0, 0, 0, 0};
+        req.on_audio(kId3Header, sizeof(kId3Header));
         req.on_audio(reinterpret_cast<const uint8_t*>(ctx.buffer.data()), ctx.buffer.size());
     }
     req.on_done(ok, ctx.error);

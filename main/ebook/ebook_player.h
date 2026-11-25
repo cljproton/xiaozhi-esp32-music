@@ -1,12 +1,14 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "ebook_reader.h"
-#include "notify/notify_player.h"
+#include <esp_audio_simple_dec.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 class EbookPlayer {
 public:
@@ -30,18 +32,17 @@ public:
     };
     Status GetStatus() const;
 
-    // The local HTTP stream endpoint calls this to serve the current mp3.
-    // offset is the byte offset into stream_data_; returns false when done.
-    bool GetStreamChunk(size_t offset, const uint8_t** data, size_t* len);
-    size_t StreamSize() const { return stream_data_.size(); }
     void SynthesizeAndPlay();
-    // One-shot TTS preview; does not touch the book/paragraph session.
     bool PlayTest(const std::string& text, const std::string& voice, int speed);
     void PlayTestAsync(const std::string& text, const std::string& voice, int speed);
     static void SynthTask(void* arg);
 
 private:
     EbookPlayer();
+    // Play stream_data_ via esp_audio_simple_player (raw://). Blocks until
+    // playback finishes or stops.
+    bool PlayStream();
+
     std::atomic<bool> active_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> stopping_{false};
@@ -50,6 +51,5 @@ private:
     std::string username_;
     std::string password_;
     std::string stream_data_;
-    std::unique_ptr<NotifyPlayer> player_;
     TaskHandle_t synth_task_ = nullptr;
 };

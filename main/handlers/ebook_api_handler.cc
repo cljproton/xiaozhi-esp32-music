@@ -227,34 +227,6 @@ esp_err_t HandleTtsTest(httpd_req_t* req) {
     return SendJson(req, res);
 }
 
-// Local stream endpoint: serves the current synthesized mp3 to NotifyPlayer.
-esp_err_t HandleStream(httpd_req_t* req) {
-    auto& player = EbookPlayer::GetInstance();
-    size_t offset = 0;
-    char range_buf[64];
-    std::string range_str;
-    if (httpd_req_get_hdr_value_str(req, "Range", range_buf, sizeof(range_buf)) == ESP_OK) {
-        range_str = range_buf;
-    }
-    const bool has_range = !range_str.empty();
-    if (range_str.rfind("bytes=", 0) == 0) {
-        offset = strtoul(range_str.c_str() + 6, nullptr, 10);
-    }
-    const uint8_t* data = nullptr;
-    size_t len = 0;
-    if (!player.GetStreamChunk(offset, &data, &len)) {
-        httpd_resp_set_status(req, "404 Not Found");
-        return httpd_resp_send(req, nullptr, 0);
-    }
-    httpd_resp_set_type(req, "audio/mpeg");
-    char hdr[32];
-    snprintf(hdr, sizeof(hdr), "bytes %u-%u/%u", (unsigned)offset,
-             (unsigned)(offset + len - 1), (unsigned)player.StreamSize());
-    httpd_resp_set_hdr(req, "Accept-Ranges", "bytes");
-    if (has_range) httpd_resp_set_hdr(req, "Content-Range", hdr);
-    return httpd_resp_send(req, reinterpret_cast<const char*>(data), len);
-}
-
 }  // namespace
 
 namespace ebook_api {
@@ -270,9 +242,6 @@ void RegisterHandlers(HandlerRegistry& registry) {
     registry.Register({"/api/ebook/tts-config", HTTP_GET, HandleTtsConfigGet, nullptr}, "TTS config get");
     registry.Register({"/api/ebook/tts-config", HTTP_POST, HandleTtsConfigPost, nullptr}, "TTS config set");
     registry.Register({"/api/ebook/tts-test", HTTP_POST, HandleTtsTest, nullptr}, "TTS test");
-    registry.Register({"/api/ebook/stream", HTTP_GET, HandleStream, nullptr}, "Ebook TTS stream");
-    // GMF detects codec from the URL extension; expose a .mp3 alias.
-    registry.Register({"/api/ebook/stream.mp3", HTTP_GET, HandleStream, nullptr}, "Ebook TTS stream mp3");
 }
 
 }  // namespace ebook_api
