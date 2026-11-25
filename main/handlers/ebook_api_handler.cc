@@ -1,0 +1,186 @@
+#include "ebook_api_handler.h"
+#include "handler_registry.h"
+#include "web_auth.h"
+#include "application.h"
+#include "ebook/ebook_player.h"
+#include "tts/tts_client.h"
+#include "cjson_utils.h"
+
+#include <esp_http_server.h>
+#include <cJSON.h>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+esp_err_t SendJson(httpd_req_t* req, cJSON* root, const char* status = "200 OK") {
+    CJsonStringUniquePtr printed(cJSON_PrintUnformatted(root));
+    cJSON_Delete(root);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    const char* body = printed ? printed.get() : "{}";
+    return httpd_resp_send(req, body, strlen(body));
+}
+
+esp_err_t SendError(httpd_req_t* req, const char* status, const char* message) {
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "error");
+    cJSON_AddStringToObject(root, "error", message);
+    return SendJson(req, root, status);
+}
+
+bool ReadBody(httpd_req_t* req, std::string& body, size_t max_len) {
+    body.clear();
+    if (req->content_len <= 0 || req->content_len > max_len) return false;
+    body.resize(req->content_len);
+    int received = 0;
+    while (received < req->content_len) {
+        int n = httpd_req_recv(req, &body[received], req->content_len - received);
+        if (n <= 0) return false;
+        received += n;
+    }
+    return true;
+}
+
+esp_err_t HandleStatus(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    auto st = EbookPlayer::GetInstance().GetStatus();
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "ok");
+    cJSON_AddBoolToObject(root, "active", st.active);
+    cJSON_AddBoolToObject(root, "paused", st.paused);
+    cJSON_AddStringToObject(root, "book", st.book_name.c_str());
+    cJSON_AddNumberToObject(root, "paragraph", st.paragraph);
+    cJSON_AddNumberToObject(root, "total", st.total);
+    return SendJson(req, root);
+}
+
+esp_err_t HandlePlay(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    std::string body;
+    if (!ReadBody(req, body, 2048)) return SendError(req, "400 Bad Request", "bad body");
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (!root) return SendError(req, "400 Bad Request", "invalid JSON");
+    auto url = cJSON_GetObjectItem(root, "url");
+    auto user = cJSON_GetObjectItem(root, "username");
+    auto pass = cJSON_GetObjectItem(root, "password");
+    bool ok = false;
+    std::string detail = "missing url";
+    if (cJSON_IsString(url) && url->valuestring[0]) {
+        std::string u = cJSON_IsString(user) ? user->valuestring : "";
+        std::string p = cJSON_IsString(pass) ? pass->valuestring : "";
+        ok = Application::GetInstance().PlayEbook(url->valuestring, u, p);
+        if (!ok) {
+            auto st = EbookPlayer::GetInstance().GetStatus();
+            detail = "failed to load book";
+        }
+    }
+    cJSON_Delete(root);
+    cJSON* res = cJSON_CreateObject();
+    cJSON_AddStringToObject(res, "status", ok ? "ok" : "error");
+    if (!ok) cJSON_AddStringToObject(res, "error", detail.c_str());
+    return SendJson(req, res, ok ? "200 OK" : "400 Bad Request");
+}
+
+esp_err_t HandleControl(httpd_req_t* req, int cmd) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    bool ok = false;
+    if (cmd == 0) { Application::GetInstance().StopEbook(); ok = true; }
+    else if (cmd == 1) ok = Application::GetInstance().EbookPause();
+    else if (cmd == 2) ok = Application::GetInstance().EbookResume();
+    else if (cmd == 3) ok = Application::GetInstance().EbookNext();
+    cJSON* res = cJSON_CreateObject();
+    cJSON_AddStringToObject(res, "status", ok ? "ok" : "error");
+    return SendJson(req, res);
+}
+
+esp_err_t HandleStop(httpd_req_t* req) { return HandleControl(req, 0); }
+esp_err_t HandlePause(httpd_req_t* req) { return HandleControl(req, 1); }
+esp_err_t HandleResume(httpd_req_t* req) { return HandleControl(req, 2); }
+esp_err_t HandleNext(httpd_req_t* req) { return HandleControl(req, 3); }
+
+esp_err_t HandleTtsConfigGet(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    size_t count = 0;
+    auto voices = TtsEdgeVoices(&count);
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "status", "ok");
+    cJSON_AddStringToObject(root, "provider", TtsGetProvider().c_str());
+    cJSON_AddStringToObject(root, "voice", TtsGetVoice().c_str());
+    cJSON_AddNumberToObject(root, "speed", TtsGetSpeed());
+    cJSON_AddStringToObject(root, "url", TtsGetHttpUrl().c_str());
+    cJSON_AddStringToObject(root, "api_key", TtsGetApiKey().c_str());
+    cJSON* arr = cJSON_CreateArray();
+    for (size_t i = 0; i < count; ++i) cJSON_AddItemToArray(arr, cJSON_CreateString(voices[i]));
+    cJSON_AddItemToObject(root, "voices", arr);
+    return SendJson(req, root);
+}
+
+esp_err_t HandleTtsConfigPost(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    std::string body;
+    if (!ReadBody(req, body, 4096)) return SendError(req, "400 Bad Request", "bad body");
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (!root) return SendError(req, "400 Bad Request", "invalid JSON");
+    auto provider = cJSON_GetObjectItem(root, "provider");
+    auto voice = cJSON_GetObjectItem(root, "voice");
+    auto speed = cJSON_GetObjectItem(root, "speed");
+    auto url = cJSON_GetObjectItem(root, "url");
+    auto key = cJSON_GetObjectItem(root, "api_key");
+    if (cJSON_IsString(provider)) TtsSetProvider(provider->valuestring);
+    if (cJSON_IsString(voice)) TtsSetVoice(voice->valuestring);
+    if (cJSON_IsNumber(speed)) TtsSetSpeed(speed->valueint);
+    if (cJSON_IsString(url)) TtsSetHttpUrl(url->valuestring);
+    if (cJSON_IsString(key)) TtsSetApiKey(key->valuestring);
+    cJSON_Delete(root);
+    cJSON* res = cJSON_CreateObject();
+    cJSON_AddStringToObject(res, "status", "ok");
+    return SendJson(req, res);
+}
+
+// Local stream endpoint: serves the current synthesized mp3 to NotifyPlayer.
+esp_err_t HandleStream(httpd_req_t* req) {
+    auto& player = EbookPlayer::GetInstance();
+    size_t offset = 0;
+    char range_buf[64];
+    std::string range_str;
+    if (httpd_req_get_hdr_value_str(req, "Range", range_buf, sizeof(range_buf)) == ESP_OK) {
+        range_str = range_buf;
+    }
+    const bool has_range = !range_str.empty();
+    if (range_str.rfind("bytes=", 0) == 0) {
+        offset = strtoul(range_str.c_str() + 6, nullptr, 10);
+    }
+    const uint8_t* data = nullptr;
+    size_t len = 0;
+    if (!player.GetStreamChunk(offset, &data, &len)) {
+        httpd_resp_set_status(req, "404 Not Found");
+        return httpd_resp_send(req, nullptr, 0);
+    }
+    httpd_resp_set_type(req, "audio/mpeg");
+    char hdr[32];
+    snprintf(hdr, sizeof(hdr), "bytes %u-%u/%u", (unsigned)offset,
+             (unsigned)(offset + len - 1), (unsigned)player.StreamSize());
+    httpd_resp_set_hdr(req, "Accept-Ranges", "bytes");
+    if (has_range) httpd_resp_set_hdr(req, "Content-Range", hdr);
+    return httpd_resp_send(req, reinterpret_cast<const char*>(data), len);
+}
+
+}  // namespace
+
+namespace ebook_api {
+
+void RegisterHandlers(HandlerRegistry& registry) {
+    registry.Register({"/api/ebook/status", HTTP_GET, HandleStatus, nullptr}, "Ebook status");
+    registry.Register({"/api/ebook/play", HTTP_POST, HandlePlay, nullptr}, "Ebook play");
+    registry.Register({"/api/ebook/stop", HTTP_POST, HandleStop, nullptr}, "Ebook stop");
+    registry.Register({"/api/ebook/pause", HTTP_POST, HandlePause, nullptr}, "Ebook pause");
+    registry.Register({"/api/ebook/resume", HTTP_POST, HandleResume, nullptr}, "Ebook resume");
+    registry.Register({"/api/ebook/next", HTTP_POST, HandleNext, nullptr}, "Ebook next");
+    registry.Register({"/api/ebook/tts-config", HTTP_GET, HandleTtsConfigGet, nullptr}, "TTS config get");
+    registry.Register({"/api/ebook/tts-config", HTTP_POST, HandleTtsConfigPost, nullptr}, "TTS config set");
+    registry.Register({"/api/ebook/stream", HTTP_GET, HandleStream, nullptr}, "Ebook TTS stream");
+}
+
+}  // namespace ebook_api

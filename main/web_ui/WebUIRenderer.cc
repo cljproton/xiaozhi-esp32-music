@@ -1,4 +1,5 @@
 #include "WebUIRenderer.h"
+#include "book_page.h"
 #include "handler_registry.h"
 #include "handlers/web_auth.h"
 #include <esp_http_server.h>
@@ -23,6 +24,7 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     <nav class="top-nav">
       <a href="/" data-i18n="nav_home">首页</a>
       <a href="/radio" data-i18n="nav_radio">电台</a>
+      <a href="/book">📖 电子书</a>
       <a href="/config">⚙️ 配置</a>
       <span class="badge" id="badge">待机</span>
       <button id="btn-lang" class="lang-btn" type="button">EN</button>
@@ -131,6 +133,7 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
   <div class="cards">
     <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music">音乐播放器</h2><small id="d-music">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
     <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio">网络电台</h2><small id="d-radio">搜索、收藏和播放网络电台</small></a>
+    <a class="card" href="/book"><div class="icon">📖</div><h2>电子书朗读</h2><small>WebDAV 加载 TXT/EPUB，在线 TTS 朗读</small></a>
     <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、天气</small></a>
   </div>
 </div>
@@ -608,6 +611,13 @@ void WebUIRenderer::RegisterRoutes(HandlerRegistry& registry) {
         .user_ctx = const_cast<WebUIRenderer*>(this),
         .is_websocket = false
     }, "WebUI music page");
+    registry.Register({
+        .uri = "/book",
+        .method = HTTP_GET,
+        .handler = BookHandler,
+        .user_ctx = const_cast<WebUIRenderer*>(this),
+        .is_websocket = false
+    }, "WebUI ebook page");
 }
 
 std::string WebUIRenderer::GenerateHomeHtml() const {
@@ -664,4 +674,13 @@ esp_err_t WebUIRenderer::IndexHandler(httpd_req_t* req) {
     std::string html = self->GenerateHtml();
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_send(req, html.c_str(), html.size());
+}
+
+esp_err_t WebUIRenderer::BookHandler(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) {
+        web_auth::RedirectToLogin(req, "/book");
+        return ESP_OK;
+    }
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, kBookPageHtml, strlen(kBookPageHtml));
 }

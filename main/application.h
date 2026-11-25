@@ -205,6 +205,14 @@ public:
     static void SaveSelectedSource(int index);
     MusicStatus GetMusicStatus() const;
 
+    // E-book (TTS) playback
+    bool PlayEbook(const std::string& url, const std::string& username = "",
+                   const std::string& password = "");
+    void StopEbook();
+    bool EbookPause();
+    bool EbookResume();
+    bool EbookNext();
+
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");

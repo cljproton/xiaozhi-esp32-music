@@ -15,6 +15,7 @@
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "weather/weather_service.h"
+#include "ebook/ebook_player.h"
 #include "websocket_protocol.h"
 
 #include <driver/gpio.h>
@@ -445,7 +446,8 @@ void Application::Run() {
             auto state = GetDeviceState();
             bool idle_screen = state == kDeviceStateIdle ||
                                (state == kDeviceStateNotifying &&
-                                (radio_playing_ || music_active_));
+                                (radio_playing_ || music_active_)) ||
+                               EbookPlayer::GetInstance().IsPlaying();
             if (idle_screen) {
                 time_t now = time(nullptr);
                 struct tm* tm_now = localtime(&now);
@@ -1388,7 +1390,8 @@ void Application::HandleStateChangedEvent() {
             break;
     }
     if (new_state != kDeviceStateIdle &&
-        !(new_state == kDeviceStateNotifying && (radio_playing_ || music_active_))) {
+        !(new_state == kDeviceStateNotifying && (radio_playing_ || music_active_)) &&
+        !EbookPlayer::GetInstance().IsPlaying()) {
         display->SetIdleInfo(Display::IdleScreenInfo{});
     }
 }
@@ -1926,7 +1929,20 @@ void Application::StopMusicPlayback() {
     StopNotification(true);
 }
 
+bool Application::PlayEbook(const std::string& url, const std::string& username,
+                            const std::string& password) {
+    return EbookPlayer::GetInstance().Play(url, username, password);
+}
+void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
+bool Application::EbookPause() { return EbookPlayer::GetInstance().Pause(); }
+bool Application::EbookResume() { return EbookPlayer::GetInstance().Resume(); }
+bool Application::EbookNext() { return EbookPlayer::GetInstance().Next(); }
+
 std::string Application::GetPlaybackTitle() const {
+    if (EbookPlayer::GetInstance().IsPlaying()) {
+        auto st = EbookPlayer::GetInstance().GetStatus();
+        if (!st.book_name.empty()) return st.book_name;
+    }
     if (radio_playing_ && radio_source_ != nullptr) {
         auto station = radio_source_->GetStationManager().FindByUrl(radio_source_->GetCurrentUrl());
         if (station.has_value()) return station->name;

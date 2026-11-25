@@ -49,10 +49,16 @@ set(SOURCES "audio/audio_codec.cc"
             "handlers/auth_api_handler.cc"
             "handlers/music_api_handler.cc"
             "handlers/system_api_handler.cc"
+            "handlers/ebook_api_handler.cc"
+            "web_ui/book_page.cc"
             "weather/weather_service.cc"
+            "tts/tts_client.cc"
+            "tts/edge_token.c"
+            "ebook/ebook_reader.cc"
+            "ebook/ebook_player.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui" "tts" "ebook")
 
 # Add board common files
 list(APPEND SOURCES

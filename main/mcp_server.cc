@@ -33,6 +33,7 @@
 #include "radio/radio_source.h"
 #endif
 #include "weather/weather_service.h"
+#include "ebook/ebook_player.h"
 
 #define TAG "MCP"
 
@@ -512,6 +513,37 @@ void McpServer::AddCommonTools() {
         }
     }
 #endif  // CONFIG_USE_RADIO
+
+    // E-book (TTS) playback tools
+    AddTool("ebook.play", "朗读 WebDAV 上的电子书（TXT/EPUB）。url 为完整文件地址，可选 username/password。",
+            PropertyList({Property("url", kPropertyTypeString),
+                          Property("username", kPropertyTypeString, ""),
+                          Property("password", kPropertyTypeString, "")}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto url = properties["url"].value<std::string>();
+                auto user = properties["username"].value<std::string>();
+                auto pass = properties["password"].value<std::string>();
+                if (!Application::GetInstance().PlayEbook(url, user, pass)) {
+                    return std::string("无法加载或播放电子书");
+                }
+                return "开始朗读电子书";
+            });
+    AddTool("ebook.stop", "停止电子书朗读。", PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                Application::GetInstance().StopEbook();
+                return true;
+            });
+    AddTool("ebook.status", "查询电子书朗读状态。", PropertyList(),
+            [](const PropertyList&) -> ReturnValue {
+                auto st = EbookPlayer::GetInstance().GetStatus();
+                cJSON* json = cJSON_CreateObject();
+                cJSON_AddBoolToObject(json, "active", st.active);
+                cJSON_AddBoolToObject(json, "paused", st.paused);
+                cJSON_AddStringToObject(json, "book", st.book_name.c_str());
+                cJSON_AddNumberToObject(json, "paragraph", st.paragraph);
+                cJSON_AddNumberToObject(json, "total", st.total);
+                return json;
+            });
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), std::make_move_iterator(original_tools.begin()),
