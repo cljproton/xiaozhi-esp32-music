@@ -35,6 +35,9 @@ public:
     bool GetStreamChunk(size_t offset, const uint8_t** data, size_t* len);
     size_t StreamSize() const { return stream_data_.size(); }
     void SynthesizeAndPlay();
+    // One-shot TTS preview; does not touch the book/paragraph session.
+    bool PlayTest(const std::string& text, const std::string& voice, int speed);
+    void PlayTestAsync(const std::string& text, const std::string& voice, int speed);
     static void SynthTask(void* arg);
 
 private:

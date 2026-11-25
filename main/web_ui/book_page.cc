@@ -42,11 +42,11 @@ button:disabled{opacity:.4}
 
   <div class="card">
     <h2>WebDAV 书目</h2>
-    <label>音源（WebDAV 目录 URL，含书名 .txt/.epub）</label>
-    <input id="book-url" placeholder="http://host/dav/books/book.epub">
+    <label>WebDAV 目录 URL（会列出其中的 TXT/EPUB）</label>
+    <input id="book-url" placeholder="http://host:port/dav/books">
     <div class="row"><input id="book-user" placeholder="用户名"><input id="book-pass" type="password" placeholder="密码"></div>
     <div class="hint">支持 TXT（UTF-8）与 EPUB；PDF/MOBI 不支持。</div>
-    <div class="row" style="margin-top:10px"><button id="btn-load">加载书目</button><button id="btn-play" class="hidden">播放此书</button></div>
+    <div class="row" style="margin-top:10px"><button id="btn-load">加载书目</button></div>
     <div id="book-list"></div>
     <div class="msg" id="book-msg"></div>
   </div>
@@ -65,6 +65,10 @@ button:disabled{opacity:.4}
     </div>
     <div class="row" style="margin-top:10px"><button id="btn-tts-save">保存 TTS 设置</button></div>
     <div class="msg" id="tts-msg"></div>
+    <label style="margin-top:14px">测试语音</label>
+    <input id="tts-test-text" value="你好，这是语音测试">
+    <button id="btn-tts-test">试听效果</button>
+    <div class="msg" id="tts-test-msg"></div>
   </div>
 </div>
 
@@ -80,6 +84,7 @@ button:disabled{opacity:.4}
 <script>
 const $=id=>document.getElementById(id);
 async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{'Content-Type':'application/json'}});if(r.status===401)location.replace('/login?next=/book');return r.json().catch(()=>({}))}
+const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let voices=[];
 async function loadTts(){const d=await api('/api/ebook/tts-config');$('tts-provider').value=d.provider||'edge';voices=d.voices||[];$('tts-voice').innerHTML=voices.map(v=>'<option>'+v+'</option>').join('');$('tts-voice').value=d.voice||voices[0]||'';$('tts-speed').value=d.speed||0;$('speed-val').textContent=d.speed||0;$('tts-url').value=d.url||'';$('tts-key').value=d.api_key||'';toggleHttp()}
 function toggleHttp(){$('http-cfg').classList.toggle('hidden',$('tts-provider').value!=='http')}
@@ -87,7 +92,9 @@ $('tts-provider').addEventListener('change',toggleHttp);
 $('tts-speed').addEventListener('input',()=>$('speed-val').textContent=$('tts-speed').value);
 $('btn-tts-save').addEventListener('click',async()=>{const d=await api('/api/ebook/tts-config',{method:'POST',body:JSON.stringify({provider:$('tts-provider').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value),url:$('tts-url').value,api_key:$('tts-key').value})});$('tts-msg').textContent=d.status==='ok'?'已保存':'保存失败'});
 async function loadStatus(){const d=await api('/api/ebook/status');$('np-title').textContent=d.active?(d.book||'播放中')+(d.total?(' · 第'+(d.paragraph+1)+'/'+d.total+'段'):''):'未播放';$('pg-cur').textContent=d.paragraph||0;$('pg-total').textContent=d.total||0;$('pg').max=d.total||1;$('pg').value=d.paragraph||0;$('btn-toggle').textContent=d.paused?'继续':(d.active?'暂停':'播放')}
-$('btn-load').addEventListener('click',async()=>{$('book-msg').textContent='加载中…';const d=await api('/api/ebook/play',{method:'POST',body:JSON.stringify({url:$('book-url').value.trim(),username:$('book-user').value,password:$('book-pass').value})});$('book-msg').textContent=d.status==='ok'?'已开始播放':'加载失败';loadStatus()});
+function playBook(url){api('/api/ebook/play',{method:'POST',body:JSON.stringify({url:url,username:$('book-user').value,password:$('book-pass').value})}).then(d=>{$('book-msg').textContent=d.status==='ok'?'已开始播放':'加载失败';loadStatus()})}
+$('btn-load').addEventListener('click',async()=>{$('book-msg').textContent='加载中…';const d=await api('/api/ebook/list',{method:'POST',body:JSON.stringify({url:$('book-url').value.trim(),username:$('book-user').value,password:$('book-pass').value})});if(d.status!=='ok'){$('book-msg').textContent=d.error||'加载失败';return}const books=d.books||[];$('book-msg').textContent=books.length?('找到 '+books.length+' 本书'):'未找到 TXT/EPUB';$('book-list').innerHTML=books.map(b=>'<div class="book-item" data-url="'+esc(b.url)+'"><span class="name">📖 '+esc(b.name)+'</span><button>播放</button></div>').join('');$('book-list').querySelectorAll('.book-item').forEach(el=>{el.addEventListener('click',()=>playBook(el.dataset.url));el.querySelector('button').addEventListener('click',e=>{e.stopPropagation();playBook(el.dataset.url)})})});
+$('btn-tts-test').addEventListener('click',async()=>{const d=await api('/api/ebook/tts-test',{method:'POST',body:JSON.stringify({text:$('tts-test-text').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value)})});$('tts-test-msg').textContent=d.status==='ok'?'试听中…':(d.error||'测试失败')});
 $('btn-toggle').addEventListener('click',async()=>{const d=await api('/api/ebook/status');await api(d.active?(d.paused?'/api/ebook/resume':'/api/ebook/pause'):'/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-stop').addEventListener('click',async()=>{await api('/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-next').addEventListener('click',async()=>{await api('/api/ebook/next',{method:'POST'});loadStatus()});

@@ -29,9 +29,13 @@ constexpr const char* kWssBase =
     "?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 const char* const kEdgeVoices[] = {
+    // Chinese
     "zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural", "zh-CN-XiaoyiNeural",
     "zh-CN-YunjianNeural", "zh-CN-YunyangNeural", "zh-CN-liaoning-XiaobeiNeural",
     "zh-CN-shaanxi-XiaoniNeural",
+    // English
+    "en-US-AriaNeural", "en-US-GuyNeural", "en-US-JennyNeural", "en-US-EmmaNeural",
+    "en-GB-SoniaNeural", "en-GB-RyanNeural", "en-AU-NatashaNeural", "en-CA-ClaraNeural",
 };
 
 std::string HexUpper(const uint8_t* bytes, size_t len) {

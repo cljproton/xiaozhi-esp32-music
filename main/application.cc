@@ -1937,6 +1937,9 @@ void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
 bool Application::EbookPause() { return EbookPlayer::GetInstance().Pause(); }
 bool Application::EbookResume() { return EbookPlayer::GetInstance().Resume(); }
 bool Application::EbookNext() { return EbookPlayer::GetInstance().Next(); }
+void Application::TestEbookTts(const std::string& text, const std::string& voice, int speed) {
+    EbookPlayer::GetInstance().PlayTestAsync(text, voice, speed);
+}
 
 std::string Application::GetPlaybackTitle() const {
     if (EbookPlayer::GetInstance().IsPlaying()) {

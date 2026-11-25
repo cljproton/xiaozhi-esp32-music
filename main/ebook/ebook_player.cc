@@ -4,6 +4,7 @@
 #include "tts/tts_client.h"
 
 #include <esp_log.h>
+#include <tuple>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -85,6 +86,38 @@ bool EbookPlayer::GetStreamChunk(size_t offset, const uint8_t** data, size_t* le
     if (offset >= stream_data_.size()) return false;
     *data = reinterpret_cast<const uint8_t*>(stream_data_.data() + offset);
     *len = stream_data_.size() - offset;
+    return true;
+}
+
+void EbookPlayer::PlayTestAsync(const std::string& text, const std::string& voice, int speed) {
+    auto params = std::make_unique<std::tuple<std::string, std::string, int>>(text, voice, speed);
+    xTaskCreate([](void* arg) {
+        auto* p = static_cast<std::tuple<std::string, std::string, int>*>(arg);
+        auto owned = std::unique_ptr<std::tuple<std::string, std::string, int>>(p);
+        EbookPlayer::GetInstance().PlayTest(std::get<0>(*owned), std::get<1>(*owned),
+                                            std::get<2>(*owned));
+        vTaskDelete(nullptr);
+    }, "tts_test", 10240, params.release(), 2, nullptr);
+}
+
+bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, int speed) {
+    if (text.empty()) return false;
+    if (active_) Stop();
+    stream_data_.clear();
+    TtsRequest req;
+    req.text = text;
+    req.voice = voice.empty() ? TtsGetVoice() : voice;
+    req.speed = speed;
+    req.on_audio = [this](const uint8_t* data, size_t len) {
+        stream_data_.append(reinterpret_cast<const char*>(data), len);
+    };
+    bool done = false;
+    req.on_done = [&done](bool, const std::string&) { done = true; };
+    if (!TtsSynthesize(req) || stream_data_.empty()) {
+        ESP_LOGE(TAG, "TTS test failed");
+        return false;
+    }
+    player_->Start("http://127.0.0.1/api/ebook/stream", {}, 1, nullptr, nullptr);
     return true;
 }
 
