@@ -187,6 +187,7 @@ public:
     std::shared_ptr<radio::RadioSource> GetRadioSource() const { return radio_source_; }
     void SetRadioSource(std::shared_ptr<radio::RadioSource> source) { radio_source_ = std::move(source); }
     bool IsRadioPlaying() const { return radio_playing_; }
+    std::string GetPlaybackTitle() const;
     void SetRadioPlaying(bool playing);
     void SetRadioStopHandler(std::function<void()> handler) { radio_stop_handler_ = std::move(handler); }
     void SetRadioStartHandler(std::function<void(const std::string&)> handler) {

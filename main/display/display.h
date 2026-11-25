@@ -75,6 +75,7 @@ public:
         char detail2[80] = "";
         char hint[64] = "";
         char city[64] = "";
+        char title[64] = "";  // radio station / music track name
         std::string icon_png;
         float temp_value = 0.0f;
         bool has_temp = false;

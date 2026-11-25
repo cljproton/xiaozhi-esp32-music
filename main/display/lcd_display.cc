@@ -26,6 +26,7 @@ LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_material_symbols_30_4);
 LV_FONT_DECLARE(font_noto_emoji_30_4);
 LV_FONT_DECLARE(lv_font_montserrat_48);
+LV_FONT_DECLARE(lv_font_montserrat_32);
 
 void LcdDisplay::InitializeLcdThemes() {
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
@@ -461,7 +462,7 @@ void LcdDisplay::CreateIdleUi() {
     lv_obj_set_width(idle_greeting_label_, LV_HOR_RES - 16);
     lv_obj_set_style_text_align(idle_greeting_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(idle_greeting_label_, accent, 0);
-    lv_obj_align(idle_greeting_label_, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(idle_greeting_label_, LV_ALIGN_TOP_MID, 0, 26);
     lv_obj_add_flag(idle_greeting_label_, LV_OBJ_FLAG_HIDDEN);
 
     // Time and date form one centered flex row so neither can overflow.
@@ -473,11 +474,11 @@ void LcdDisplay::CreateIdleUi() {
     lv_obj_set_flex_flow(idle_time_row_, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(idle_time_row_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(idle_time_row_, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_align(idle_time_row_, LV_ALIGN_TOP_MID, 0, 44);
     lv_obj_add_flag(idle_time_row_, LV_OBJ_FLAG_HIDDEN);
 
     idle_time_label_ = lv_label_create(idle_time_row_);
-    lv_obj_set_style_text_font(idle_time_label_, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(idle_time_label_, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(idle_time_label_, bright, 0);
     lv_label_set_text(idle_time_label_, "");
 
@@ -609,7 +610,16 @@ void LcdDisplay::SetIdleInfo(const IdleScreenInfo& info) {
     if (emoji_box_) lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
     if (emoji_label_) lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
     if (emoji_image_) lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
-    if (status_label_) lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+    // Top bar keeps WiFi/battery; the centered status label shows the
+    // radio station / track name (long names scroll via LONG_SCROLL_CIRCULAR).
+    if (status_label_) {
+        if (info.title[0] != '\0') {
+            lv_label_set_text(status_label_, info.title);
+            lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     SetIdleLabelText(idle_greeting_label_, info.greeting);
     SetIdleLabelText(idle_time_label_, info.time);

@@ -441,8 +441,12 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
-            // Idle screen: greeting, time+date, weather, location. Hidden in conversation.
-            if (GetDeviceState() == kDeviceStateIdle) {
+            // Idle screen stays visible while radio/music plays (device is notifying).
+            auto state = GetDeviceState();
+            bool idle_screen = state == kDeviceStateIdle ||
+                               (state == kDeviceStateNotifying &&
+                                (radio_playing_ || music_active_));
+            if (idle_screen) {
                 time_t now = time(nullptr);
                 struct tm* tm_now = localtime(&now);
                 if (tm_now != nullptr && tm_now->tm_year >= 2025 - 1900) {
@@ -499,6 +503,8 @@ void Application::Run() {
 #endif
                     }
                     idle.icon_png = weather::GetIconPng();
+                    const std::string title = GetPlaybackTitle();
+                    snprintf(idle.title, sizeof(idle.title), "%s", title.c_str());
                     idle.valid = true;
                     display->SetIdleInfo(idle);
                 }
@@ -1381,7 +1387,8 @@ void Application::HandleStateChangedEvent() {
             // Do nothing
             break;
     }
-    if (new_state != kDeviceStateIdle) {
+    if (new_state != kDeviceStateIdle &&
+        !(new_state == kDeviceStateNotifying && (radio_playing_ || music_active_))) {
         display->SetIdleInfo(Display::IdleScreenInfo{});
     }
 }
@@ -1501,6 +1508,7 @@ bool Application::StartNotification(std::string audio_url, std::vector<NotifySub
                                    const std::string& username, const std::string& password,
                                    const std::string& title, uint64_t start_byte_pos,
                                    uint32_t start_pos_ms, uint32_t start_duration_ms) {
+    (void)title;  // track name is shown in the top bar via GetPlaybackTitle()
     // 音乐与电台共用输出设备：先停电台，避免两路 PCM 混在一起
     if (radio_playing_) {
         StopRadio();
@@ -1551,13 +1559,6 @@ bool Application::StartNotification(std::string audio_url, std::vector<NotifySub
         ESP_LOGE(TAG, "Failed to start notification playback");
         StopNotification();
         return false;
-    }
-    if (!title.empty()) {
-        Schedule([this, playback_id, title = std::string(title)]() {
-            if (GetDeviceState() == kDeviceStateNotifying && notification_playback_id_ == playback_id) {
-                Board::GetInstance().GetDisplay()->SetChatMessage("assistant", title.c_str());
-            }
-        });
     }
     // 外部播放（音乐）开始：降低屏幕背光耗电；AI 语音不参与此减耗
     SetBacklightForPlayback(music_active_);
@@ -1923,6 +1924,21 @@ void Application::StopMusicPlayback() {
         ClearMusicSessionLocked();
     }
     StopNotification(true);
+}
+
+std::string Application::GetPlaybackTitle() const {
+    if (radio_playing_ && radio_source_ != nullptr) {
+        auto station = radio_source_->GetStationManager().FindByUrl(radio_source_->GetCurrentUrl());
+        if (station.has_value()) return station->name;
+    }
+    if (music_active_) {
+        std::lock_guard<std::mutex> lock(music_mutex_);
+        if (music_cursor_ < music_order_.size()) {
+            size_t index = music_order_[music_cursor_];
+            if (index < music_playlist_.size()) return music_playlist_[index].title;
+        }
+    }
+    return "";
 }
 
 void Application::SetRadioPlaying(bool playing) {
