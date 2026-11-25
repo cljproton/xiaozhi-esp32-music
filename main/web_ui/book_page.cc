@@ -53,7 +53,7 @@ button:disabled{opacity:.4}
     <input id="book-url" placeholder="http://host:port/dav/books">
     <div class="row"><input id="book-user" placeholder="用户名"><input id="book-pass" type="password" placeholder="密码"></div>
     <div class="hint">支持 TXT（UTF-8）与 EPUB；PDF/MOBI 不支持。</div>
-    <div class="row" style="margin-top:10px"><button id="btn-load">加载书目</button></div>
+    <div class="row" style="margin-top:10px"><button id="btn-save-source">保存书源</button></div>
     <div id="book-list"></div>
     <div class="pager"><button id="book-prev">上一页</button><span id="book-page">-</span><button id="book-next">下一页</button></div>
     <div class="msg" id="book-msg"></div>
@@ -106,12 +106,14 @@ function renderBooks(){const pages=Math.max(1,Math.ceil(allBooks.length/PAGE_SIZ
 $('book-prev').addEventListener('click',()=>{if(bookPage>1){bookPage--;renderBooks()}});
 $('book-next').addEventListener('click',()=>{bookPage++;renderBooks()});
 function playBook(url){setMsg('book-msg','加载中…','info');api('/api/ebook/play',{method:'POST',body:JSON.stringify({url:url,username:$('book-user').value,password:$('book-pass').value})}).then(d=>{setMsg('book-msg',d.status==='ok'?'已开始播放':'加载失败',d.status==='ok'?'ok':'err');loadStatus();if(d.status==='ok')setTimeout(()=>setMsg('book-msg',''),3000)})}
-$('btn-load').addEventListener('click',async()=>{setMsg('book-msg','加载中…','info');const d=await api('/api/ebook/list',{method:'POST',body:JSON.stringify({url:$('book-url').value.trim(),username:$('book-user').value,password:$('book-pass').value})});if(d.status!=='ok'){setMsg('book-msg',d.error||'加载失败','err');return}allBooks=d.books||[];bookPage=1;renderBooks();setMsg('book-msg',allBooks.length?('找到 '+allBooks.length+' 本书'):'未找到 TXT/EPUB','info')});
+async function loadBooks(){const u=$('book-url').value.trim();if(!u)return;setMsg('book-msg','加载中…','info');const d=await api('/api/ebook/list',{method:'POST',body:JSON.stringify({url:u,username:$('book-user').value,password:$('book-pass').value})});if(d.status!=='ok'){setMsg('book-msg',d.error||'加载失败','err');return}allBooks=d.books||[];bookPage=1;renderBooks();setMsg('book-msg',allBooks.length?('找到 '+allBooks.length+' 本书'):'未找到 TXT/EPUB','info')}
+$('book-url').addEventListener('change',loadBooks);
+$('btn-save-source').addEventListener('click',async()=>{setMsg('book-msg','保存中…','info');const d=await api('/api/ebook/tts-config',{method:'POST',body:JSON.stringify({source_url:$('book-url').value.trim(),source_user:$('book-user').value,source_pass:$('book-pass').value})});setMsg('book-msg',d.status==='ok'?'书源已保存':'保存失败',d.status==='ok'?'ok':'err');if(d.status==='ok')loadBooks()});
 $('btn-tts-test').addEventListener('click',async()=>{setMsg('tts-test-msg','合成中…','info');const d=await api('/api/ebook/tts-test',{method:'POST',body:JSON.stringify({text:$('tts-test-text').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value)})});if(d.status!=='ok'){setMsg('tts-test-msg',d.error||'测试失败','err');return}setMsg('tts-test-msg','试听中…','info');setTimeout(()=>setMsg('tts-test-msg',''),4000)});
 $('btn-toggle').addEventListener('click',async()=>{const d=await api('/api/ebook/status');await api(d.active?(d.paused?'/api/ebook/resume':'/api/ebook/pause'):'/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-stop').addEventListener('click',async()=>{await api('/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-next').addEventListener('click',async()=>{await api('/api/ebook/next',{method:'POST'});loadStatus()});
-setInterval(loadStatus,2000);loadTts();loadStatus();
+setInterval(loadStatus,2000);loadTts().then(loadBooks);loadStatus();
 </script>
 </body>
 </html>)HTML";

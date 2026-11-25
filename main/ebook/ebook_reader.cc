@@ -1,5 +1,5 @@
 #include "ebook_reader.h"
-#include "gb2312_table.h"
+#include "gbk_table.h"
 
 #include "board.h"
 
@@ -87,18 +87,21 @@ static void AppendUtf8(std::string& out, uint32_t cp) {
     }
 }
 
-// Convert GBK/GB2312 bytes to UTF-8. Bytes in the GB2312 quad-wei range are
-// mapped via the table; ASCII passes through; unmappable bytes become '?'.
+// Convert full GBK (incl. rare/extended hanzi) to UTF-8 via lookup table.
+// ASCII passes through; unmappable bytes become '?'.
 static std::string GbkToUtf8(const std::string& in) {
     std::string out;
     out.reserve(in.size() * 2);
     for (size_t i = 0; i < in.size();) {
         unsigned char c = static_cast<unsigned char>(in[i]);
         if (c < 0x80) { out.push_back(static_cast<char>(c)); ++i; continue; }
-        if (c >= 0xA1 && c <= 0xFE && i + 1 < in.size()) {
+        if (c >= 0x81 && c <= 0xFE && i + 1 < in.size()) {
             unsigned char c2 = static_cast<unsigned char>(in[i + 1]);
-            if (c2 >= 0xA1 && c2 <= 0xFE) {
-                uint16_t uni = kGb2312Unicode[(c - 0xA1) * 94 + (c2 - 0xA1)];
+            int ti = -1;
+            if (c2 >= 0x40 && c2 <= 0x7E) ti = c2 - 0x40;
+            else if (c2 >= 0x80 && c2 <= 0xFE) ti = c2 - 0x40 - 1;
+            if (ti >= 0) {
+                uint16_t uni = kGbkUnicode[(c - 0x81) * 190 + ti];
                 if (uni != 0) { AppendUtf8(out, uni); i += 2; continue; }
             }
         }

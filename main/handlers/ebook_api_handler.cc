@@ -213,6 +213,32 @@ esp_err_t HandleTtsTest(httpd_req_t* req) {
 
 namespace ebook_api {
 
+// Percent-decode a WebDAV href filename into readable UTF-8 text.
+static std::string UrlDecodeName(const std::string& in) {
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int hi = hex(in[i + 1]), lo = hex(in[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    // Double-encoded names (e.g. %255B -> %5B) need a second pass.
+    if (out.find('%') != std::string::npos) return UrlDecodeName(out);
+    return out;
+}
+
 cJSON* ListSourceBooks(const std::string& full, const std::string& u,
                        const std::string& p, std::string& error) {
     size_t scheme = full.find("://");
@@ -250,7 +276,7 @@ cJSON* ListSourceBooks(const std::string& full, const std::string& u,
             cJSON* item = cJSON_CreateObject();
             std::string file_url = origin + href;
             cJSON_AddStringToObject(item, "url", file_url.c_str());
-            cJSON_AddStringToObject(item, "name", href.substr(href.find_last_of('/') + 1).c_str());
+            cJSON_AddStringToObject(item, "name", UrlDecodeName(href.substr(href.find_last_of('/') + 1)).c_str());
             // Reading progress (paragraph index) stored by EbookPlayer.
             uint32_t h = 2166136261u;
             for (unsigned char c : file_url) { h ^= c; h *= 16777619u; }
