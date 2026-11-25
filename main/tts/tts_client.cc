@@ -10,6 +10,8 @@
 // Edge TTS v2 Sec-MS-GEC token algorithm (verified against edge-tts).
 extern "C" void edge_token_v2(uint64_t unix_time, char* out, size_t out_len);
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -23,7 +25,7 @@ namespace {
 
 constexpr const char* kNs = "tts";
 constexpr const char* kTrustedClientToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-constexpr const char* kSecMsGecVersion = "2-143.0.3650.75";
+constexpr const char* kSecMsGecVersion = "2-155.0.4283.45";
 constexpr const char* kWssBase =
     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
     "?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
@@ -54,6 +56,22 @@ std::string MakeSecMsGec() {
     char token[128];
     edge_token_v2(static_cast<uint64_t>(time(nullptr)), token, sizeof(token));
     return token;
+}
+
+// 32-hex UUID v4: version nibble=4, variant bits=10 (matches uuid.uuid4().hex).
+std::string MakeUuid4Hex() {
+    uint8_t b[16];
+    for (int i = 0; i < 16; ++i) b[i] = static_cast<uint8_t>(esp_random());
+    b[6] = (b[6] & 0x0F) | 0x40;
+    b[8] = (b[8] & 0x3F) | 0x80;
+    static const char* H = "0123456789abcdef";
+    std::string out;
+    out.reserve(32);
+    for (int i = 0; i < 16; ++i) {
+        out.push_back(H[b[i] >> 4]);
+        out.push_back(H[b[i] & 0x0F]);
+    }
+    return out;
 }
 
 std::string XmlEscape(const std::string& s) {
@@ -87,7 +105,7 @@ std::string MakeSsml(const std::string& text, const std::string& voice, int spee
     std::string escaped = XmlEscape(text);
     std::string buf =
         "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
-        "xml:lang='zh-CN'><voice name='" + FullVoiceName(voice) +
+        "xml:lang='en-US'><voice name='" + FullVoiceName(voice) +
         "'><prosody pitch='+0Hz' rate='" + rate + "' volume='+0%'>" +
         escaped + "</prosody></voice></speak>";
     return buf;
@@ -98,6 +116,7 @@ struct EdgeCtx {
     esp_websocket_client_handle_t client = nullptr;
     std::string text_chunks;
     bool connected = false;
+    std::string buffer;
     bool done = false;
     bool ok = false;
     std::string error;
@@ -125,13 +144,11 @@ void EdgeEvent(void* arg, esp_event_base_t, int32_t event, void* data) {
     } else if (event == WEBSOCKET_EVENT_DATA) {
         auto* ev = static_cast<esp_websocket_event_data_t*>(data);
         if (ev->op_code == WS_TRANSPORT_OPCODES_BINARY && ev->data_len > 0) {
-            if (ctx->request->on_audio) {
-                ctx->request->on_audio(reinterpret_cast<const uint8_t*>(ev->data_ptr), ev->data_len);
-            }
+            ctx->buffer.append(ev->data_ptr, ev->data_len);
         }
     } else if (event == WEBSOCKET_EVENT_CLOSED) {
         ctx->done = true;
-        ctx->ok = true;
+        ctx->ok = !ctx->buffer.empty();
     } else if (event == WEBSOCKET_EVENT_ERROR) {
         ctx->done = true;
         ctx->error = "websocket error";
@@ -140,14 +157,10 @@ void EdgeEvent(void* arg, esp_event_base_t, int32_t event, void* data) {
 
 bool EdgeSynthesize(const TtsRequest& req) {
     char url[640];
-    uint32_t r0 = esp_random(), r1 = esp_random(), r2 = esp_random(), r3 = esp_random();
-    char conn_id[64];
-    snprintf(conn_id, sizeof(conn_id), "%08lx%08lx%08lx%08lx",
-             (unsigned long)r0, (unsigned long)r1, (unsigned long)r2, (unsigned long)r3);
+    std::string conn_id = MakeUuid4Hex();
     std::string token = MakeSecMsGec();
-    ESP_LOGW(TAG, "Edge TTS time=%lld token8=%.8s", (long long)time(nullptr), token.c_str());
     snprintf(url, sizeof(url), "%s&ConnectionId=%s&Sec-MS-GEC=%s&Sec-MS-GEC-Version=%s",
-             kWssBase, conn_id, token.c_str(), kSecMsGecVersion);
+             kWssBase, conn_id.c_str(), token.c_str(), kSecMsGecVersion);
     esp_websocket_client_config_t cfg = {};
     cfg.uri = url;
     cfg.disable_auto_reconnect = true;
@@ -172,13 +185,10 @@ bool EdgeSynthesize(const TtsRequest& req) {
     esp_websocket_client_append_header(client, "Cache-Control", "no-cache");
     esp_websocket_client_append_header(client, "Accept-Encoding", "gzip, deflate, br, zstd");
     esp_websocket_client_append_header(client, "Accept-Language", "en-US,en;q=0.9");
-    esp_websocket_client_append_header(client, "Sec-WebSocket-Extensions",
-                                       "permessage-deflate; client_max_window_bits");
-    char muid[80];
-    uint32_t m0 = esp_random(), m1 = esp_random(), m2 = esp_random(), m3 = esp_random();
-    snprintf(muid, sizeof(muid), "muid=%08lX%08lX%08lX%08lX;", (unsigned long)m0,
-             (unsigned long)m1, (unsigned long)m2, (unsigned long)m3);
-    esp_websocket_client_append_header(client, "Cookie", muid);
+    std::string muid_hex = MakeUuid4Hex();
+    std::transform(muid_hex.begin(), muid_hex.end(), muid_hex.begin(), ::toupper);
+    std::string cookie = "muid=" + muid_hex + ";";
+    esp_websocket_client_append_header(client, "Cookie", cookie.c_str());
     esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, EdgeEvent, &ctx);
     if (esp_websocket_client_start(client) != ESP_OK) {
         esp_websocket_client_destroy(client);
@@ -200,16 +210,13 @@ bool EdgeSynthesize(const TtsRequest& req) {
             "Content-Type:application/json; charset=utf-8\r\n"
             "Path:speech.config\r\n\r\n"
             "{\"context\":{\"synthesis\":{\"audio\":{\"metadataoptions\":"
-            "{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},"
+            "{\"sentenceBoundaryEnabled\":\"true\",\"wordBoundaryEnabled\":\"false\"},"
             "\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}\r\n";
         esp_websocket_client_send_text(client, cfg.c_str(), cfg.size(), pdMS_TO_TICKS(5000));
         vTaskDelay(pdMS_TO_TICKS(100));
         std::string ssml = MakeSsml(req.text, req.voice, req.speed);
-        uint32_t r0 = esp_random(), r1 = esp_random();
-        char reqid[40];
-        snprintf(reqid, sizeof(reqid), "%08lx%08lx%08lx%08lx", (unsigned long)r0,
-                 (unsigned long)r1, (unsigned long)(r0 ^ r1), (unsigned long)~r0);
-        std::string msg = "X-RequestId:" + std::string(reqid) + "\r\n"
+        std::string reqid = MakeUuid4Hex();
+        std::string msg = "X-RequestId:" + reqid + "\r\n"
                           "Content-Type:application/ssml+xml\r\n"
                           "X-Timestamp:" + ts + "Z\r\n"
                           "Path:ssml\r\n\r\n" + ssml;
@@ -217,19 +224,33 @@ bool EdgeSynthesize(const TtsRequest& req) {
         ESP_LOGI(TAG, "Edge TTS SSML sent (%u bytes)", (unsigned)msg.size());
     }
 
-    // Wait for synthesis to finish (server closes the socket) with a timeout.
+    // Wait for audio. The server may not send a CLOSE event promptly, so once
+    // audio starts arriving, finish after a short quiet period.
     waited = 0;
-    while (!ctx.done && waited < timeout_ms) {
+    size_t last_size = 0;
+    int quiet = 0;
+    while (waited < timeout_ms && !ctx.done) {
         vTaskDelay(pdMS_TO_TICKS(100));
         waited += 100;
-    }
-    if (!ctx.done) {
-        ctx.error = "timeout";
+        size_t now_size = ctx.buffer.size();
+        if (now_size > last_size) {
+            last_size = now_size;
+            quiet = 0;
+        } else if (now_size > 0) {
+            quiet += 100;
+            if (quiet >= 1500) break;  // audio finished
+        }
     }
     esp_websocket_client_close(client, pdMS_TO_TICKS(1000));
     esp_websocket_client_destroy(client);
-    req.on_done(ctx.ok && ctx.done && ctx.error.empty(), ctx.error);
-    return ctx.ok && ctx.done;
+    bool ok = !ctx.buffer.empty() && ctx.error.empty();  // audio received = success
+    ESP_LOGI(TAG, "Edge TTS result: %s (%u audio bytes)", ok ? "ok" : "failed",
+             (unsigned)ctx.buffer.size());
+    if (ok && !ctx.buffer.empty() && req.on_audio) {
+        req.on_audio(reinterpret_cast<const uint8_t*>(ctx.buffer.data()), ctx.buffer.size());
+    }
+    req.on_done(ok, ctx.error);
+    return ok;
 }
 
 bool HttpSynthesize(const TtsRequest& req) {
@@ -287,7 +308,15 @@ bool HttpSynthesize(const TtsRequest& req) {
 
 bool TtsSynthesize(const TtsRequest& request) {
     if (TtsGetProvider() == "http") return HttpSynthesize(request);
-    return EdgeSynthesize(request);
+    // Microsoft rolls out the v2 backend region by region; a silent close or
+    // 403 can happen intermittently. Retry with exponential backoff.
+    static const int backoffs[] = {0, 1500, 3000, 6000};
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(backoffs[attempt]));
+        if (EdgeSynthesize(request)) return true;
+        ESP_LOGW(TAG, "Edge TTS attempt %d failed, retrying", attempt + 1);
+    }
+    return false;
 }
 
 std::string TtsGetProvider() {

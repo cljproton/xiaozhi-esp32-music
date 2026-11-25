@@ -271,6 +271,8 @@ void RegisterHandlers(HandlerRegistry& registry) {
     registry.Register({"/api/ebook/tts-config", HTTP_POST, HandleTtsConfigPost, nullptr}, "TTS config set");
     registry.Register({"/api/ebook/tts-test", HTTP_POST, HandleTtsTest, nullptr}, "TTS test");
     registry.Register({"/api/ebook/stream", HTTP_GET, HandleStream, nullptr}, "Ebook TTS stream");
+    // GMF detects codec from the URL extension; expose a .mp3 alias.
+    registry.Register({"/api/ebook/stream.mp3", HTTP_GET, HandleStream, nullptr}, "Ebook TTS stream mp3");
 }
 
 }  // namespace ebook_api

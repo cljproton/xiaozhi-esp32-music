@@ -117,7 +117,7 @@ bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, in
         ESP_LOGE(TAG, "TTS test failed");
         return false;
     }
-    player_->Start("http://127.0.0.1/api/ebook/stream", {}, 1, nullptr, nullptr);
+    player_->Start("http://127.0.0.1/api/ebook/stream.mp3", {}, 1, nullptr, nullptr);
     return true;
 }
 
@@ -156,7 +156,7 @@ void EbookPlayer::SynthesizeAndPlay() {
     // Play the synthesized mp3 via the local HTTP stream endpoint. The
     // finished callback is invoked from the notify task; just mark completion
     // so the synthesis task advances to the next paragraph.
-    player_->Start("http://127.0.0.1/api/ebook/stream", {}, 1, nullptr,
+    player_->Start("http://127.0.0.1/api/ebook/stream.mp3", {}, 1, nullptr,
                    [this](uint32_t, bool) { paragraph_++; });
     // Wait for this paragraph to finish before synthesizing the next one.
     while (active_ && !stopping_ && player_->IsBusy()) {
