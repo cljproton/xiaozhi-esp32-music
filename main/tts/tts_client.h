@@ -18,6 +18,8 @@ struct TtsRequest {
 // Synthesize text into a stream of mp3 frames. The call is synchronous and
 // blocks until synthesis finishes or fails; audio is delivered via callbacks.
 bool TtsSynthesize(const TtsRequest& request);
+// Sec-MS-GEC v2 token for the current time (shared with EdgeSession).
+std::string TtsMakeSecMsGec();
 
 // Current provider from NVS ("edge" default, or "http").
 std::string TtsGetProvider();

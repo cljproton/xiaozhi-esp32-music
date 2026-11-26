@@ -33,27 +33,25 @@ public:
     };
     Status GetStatus() const;
 
-    void SynthesizeAndPlay();
     bool PlayTest(const std::string& text, const std::string& voice, int speed);
     void PlayTestAsync(const std::string& text, const std::string& voice, int speed);
     static void SynthTask(void* arg);
+    static void PlayTask(void* arg);
 
 private:
     EbookPlayer();
-    // Play stream_data_ via esp_audio_simple_player (raw://). Blocks until
-    // playback finishes or stops.
-    bool PlayStream();
 
     std::atomic<bool> active_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> skip_requested_{false};
+    std::atomic<bool> feed_done_{false};
     EbookBook book_;
     TextStream stream_;
     std::string book_url_;
-    size_t paragraph_ = 0;
-    size_t book_offset_ = 0;  // saved byte offset for resume
+    size_t paragraph_ = 0;  // sentences sent so far
     std::string username_;
     std::string password_;
-    std::string stream_data_;
-    TaskHandle_t synth_task_ = nullptr;
+    TaskHandle_t synth_task_ = nullptr;  // feeds text to TTS + reconnects
+    TaskHandle_t play_task_ = nullptr;   // decodes ring -> PCM playback
 };

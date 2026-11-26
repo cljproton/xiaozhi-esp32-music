@@ -51,13 +51,6 @@ std::string HexUpper(const uint8_t* bytes, size_t len) {
     return out;
 }
 
-// Sec-MS-GEC v2 token: 5-minute-aligned timestamp + custom hash.
-std::string MakeSecMsGec() {
-    char token[128];
-    edge_token_v2(static_cast<uint64_t>(time(nullptr)), token, sizeof(token));
-    return token;
-}
-
 // 32-hex UUID v4: version nibble=4, variant bits=10 (matches uuid.uuid4().hex).
 std::string MakeUuid4Hex() {
     uint8_t b[16];
@@ -158,7 +151,7 @@ void EdgeEvent(void* arg, esp_event_base_t, int32_t event, void* data) {
 bool EdgeSynthesize(const TtsRequest& req) {
     char url[640];
     std::string conn_id = MakeUuid4Hex();
-    std::string token = MakeSecMsGec();
+    std::string token = TtsMakeSecMsGec();
     snprintf(url, sizeof(url), "%s&ConnectionId=%s&Sec-MS-GEC=%s&Sec-MS-GEC-Version=%s",
              kWssBase, conn_id.c_str(), token.c_str(), kSecMsGecVersion);
     esp_websocket_client_config_t cfg = {};
@@ -312,6 +305,13 @@ bool HttpSynthesize(const TtsRequest& req) {
 }
 
 }  // namespace
+
+// Sec-MS-GEC v2 token: 5-minute-aligned timestamp + custom hash.
+std::string TtsMakeSecMsGec() {
+    char token[128];
+    edge_token_v2(static_cast<uint64_t>(time(nullptr)), token, sizeof(token));
+    return token;
+}
 
 bool TtsSynthesize(const TtsRequest& request) {
     if (TtsGetProvider() == "http") return HttpSynthesize(request);

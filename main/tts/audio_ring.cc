@@ -1,5 +1,6 @@
 #include "audio_ring.h"
 #include <esp_heap_caps.h>
+#include <esp_log.h>
 
 AudioRing::AudioRing(size_t capacity) : cap_(capacity), head_(0), tail_(0) {
     buf_ = static_cast<uint8_t*>(heap_caps_malloc(cap_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -19,6 +20,7 @@ size_t AudioRing::Write(const uint8_t* data, size_t len) {
     xSemaphoreTake(mutex_, portMAX_DELAY);
     size_t free_sp = cap_ - (tail_ - head_);
     size_t n = len < free_sp ? len : free_sp;
+    if (n < len) ESP_LOGW("AudioRing", "overflow, dropping %u bytes", (unsigned)(len - n));
     for (size_t i = 0; i < n; ++i) {
         buf_[(tail_ + i) % cap_] = data[i];
     }

@@ -11,7 +11,8 @@
 namespace {
 
 constexpr size_t kChunkSize = 32 * 1024;
-constexpr size_t kMaxSentence = 600;  // bytes, ~200 Chinese chars
+constexpr size_t kMaxSentence = 180;  // bytes (~60 Chinese chars): keeps a
+                                      // sentence's MP3 well below the ring size
 
 // Number of trailing bytes that form an incomplete multibyte character.
 size_t IncompleteTail(const std::string& s, bool gbk) {
@@ -44,17 +45,20 @@ TextStream::TextStream() = default;
 TextStream::~TextStream() { Close(); }
 
 bool TextStream::Open(const std::string& url, const std::string& username,
-                      const std::string& password, size_t start_offset) {
+                      const std::string& password, size_t raw_start,
+                      size_t text_skip) {
     Close();
     url_ = url;
     username_ = username;
     password_ = password;
-    file_offset_ = start_offset;
+    file_offset_ = raw_start;
     pos_ = 0;
     eof_ = false;
     need_convert_ = false;
     carry_.clear();
     buf_.clear();
+    pending_skip_ = text_skip;
+    failures_ = 0;
     return true;  // actual fetch happens on first Refill
 }
 
@@ -64,7 +68,10 @@ void TextStream::Close() {
     carry_.clear();
     pos_ = 0;
     file_offset_ = 0;
+    chunk_raw_start_ = 0;
     total_bytes_ = 0;
+    pending_skip_ = 0;
+    failures_ = 0;
     eof_ = true;
 }
 
@@ -99,18 +106,22 @@ bool TextStream::Refill() {
             int n;
             while ((n = esp_http_client_read(client, tmp, sizeof(tmp))) > 0) raw.append(tmp, n);
             if (!raw.empty()) {
-                if (!carry_.empty()) { raw = carry_ + raw; carry_.clear(); }
+                // The fetch starts at the previous chunk's incomplete tail, so
+                // the tail bytes arrive again here; nothing to prepend.
+                carry_.clear();
                 // Detect encoding on every chunk (a text file has one encoding;
                 // checking each chunk also covers resume from a non-zero offset).
                 need_convert_ = !IsValidUtf8(raw);
+                chunk_raw_start_ = file_offset_;
                 size_t cut = IncompleteTail(raw, need_convert_);
-                if (cut > 0 && cut < raw.size()) {
-                    carry_ = raw.substr(raw.size() - cut);
-                    raw.resize(raw.size() - cut);
-                }
+                if (cut > 0 && cut < raw.size()) raw.resize(raw.size() - cut);
                 buf_ = need_convert_ ? GbkToUtf8(raw) : raw;
                 file_offset_ += raw.size();
                 pos_ = 0;
+                if (pending_skip_ > 0) {
+                    pos_ = std::min(pending_skip_, buf_.size());
+                    pending_skip_ = 0;
+                }
                 got = true;
             }
         } else {
@@ -121,8 +132,15 @@ bool TextStream::Refill() {
     }
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    if (!got || (total_bytes_ && file_offset_ >= total_bytes_)) eof_ = true;
-    return got;
+    if (!got) {
+        // A failed Range request is usually transient (server hiccup). Keep
+        // eof_ false so the caller retries instead of declaring the book done.
+        if (++failures_ >= 10) eof_ = true;
+        return false;
+    }
+    failures_ = 0;
+    if (total_bytes_ && file_offset_ >= total_bytes_) eof_ = true;
+    return true;
 }
 
 bool TextStream::NextSentence(std::string& out) {
@@ -162,6 +180,9 @@ bool TextStream::NextSentence(std::string& out) {
         if (end > start) {
             out = buf_.substr(start, end - start);
             pos_ = end;
+            // Plain-text books are full of blank lines; sending them to the TTS
+            // server spends a pipeline slot on silence and delays real audio.
+            if (out.find_first_not_of(" \t\r\n") == std::string::npos) continue;
             return true;
         }
         // No progress possible; refill.
