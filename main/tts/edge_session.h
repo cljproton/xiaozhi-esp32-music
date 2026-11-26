@@ -15,6 +15,7 @@
 class EdgeSession {
 public:
     static EdgeSession& GetInstance();
+    static EdgeSession& GetTestInstance();
 
     bool Connect(const std::string& voice, int speed);
     void Disconnect();

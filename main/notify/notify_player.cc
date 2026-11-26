@@ -28,12 +28,12 @@
 #include "mflac_decoder.h"
 
 #include "board.h"
+#include "audio/audio_decoder_registry.h"
 
 namespace {
 constexpr uint32_t kNotifyTaskStackSize = 6144;
 constexpr UBaseType_t kNotifyTaskPriority = 2;
 const char* TAG = "NotifyPlayer";
-static int s_audio_dec_reg_ref_count = 0;
 
 bool IsSupportedUrl(const std::string& url) {
     return url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0;
@@ -408,15 +408,11 @@ bool NotifyPlayer::StartGmfPlayback(const std::string& audio_url, uint32_t playb
 #endif
 
     esp_gmf_element_handle_t el = nullptr;
-    if (s_audio_dec_reg_ref_count == 0) {
-        if (esp_audio_dec_register_default() != ESP_AUDIO_ERR_OK) {
-            ESP_LOGE(TAG, "Failed to register default audio decoders");
-            StopGmfPlayback();
-            return false;
-        }
-        esp_audio_simple_dec_register_default();
+    if (!AudioDecoderRegistry::GetInstance().Acquire()) {
+        ESP_LOGE(TAG, "Failed to register default audio decoders");
+        StopGmfPlayback();
+        return false;
     }
-    ++s_audio_dec_reg_ref_count;
     if (is_flac) {
         // micro-flac decoder: handles large PICTURE metadata blocks (configurable limit)
         // 传入时长指针，解码器解析 STREAMINFO 后直写精确时长
@@ -924,13 +920,8 @@ void NotifyPlayer::StopGmfPlayback() {
     if (pool != nullptr) {
         esp_gmf_pool_deinit(pool);
     }
-    // 与 ASP 一致：释放默认解码器注册（refcount 归零时注销）
-    if (s_audio_dec_reg_ref_count > 0) {
-        --s_audio_dec_reg_ref_count;
-        if (s_audio_dec_reg_ref_count == 0) {
-            esp_audio_dec_unregister_default();
-        }
-    }
+    // 与 ASP 一致：引用计数归零时才注销，避免影响电子书等其他解码用户
+    AudioDecoderRegistry::GetInstance().Release();
 }
 
 void NotifyPlayer::WorkerEntry(void* arg) {

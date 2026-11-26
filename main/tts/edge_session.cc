@@ -65,6 +65,11 @@ EdgeSession& EdgeSession::GetInstance() {
     return instance;
 }
 
+EdgeSession& EdgeSession::GetTestInstance() {
+    static EdgeSession instance;
+    return instance;
+}
+
 void EdgeSession::EventHandler(void* arg, esp_event_base_t, int32_t event, void* data) {
     auto* self = static_cast<EdgeSession*>(arg);
     if (event == WEBSOCKET_EVENT_CONNECTED) {

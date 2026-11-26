@@ -1,6 +1,7 @@
 #include "ebook_player.h"
 #include "application.h"
 #include "board.h"
+#include "audio/audio_decoder_registry.h"
 #include "tts/tts_client.h"
 #include "tts/edge_session.h"
 #include "settings.h"
@@ -49,10 +50,6 @@ void SaveProgress(const std::string& url, size_t raw, size_t text) {
 constexpr int kOutSize = 4096;
 constexpr size_t kBatchSamples = 12000;  // 0.5s at 24kHz
 
-// Decoder registry is process-global and other players unregister it.
-std::mutex g_dec_mutex;
-bool g_dec_registered_once = false;
-
 // One MP3 decoder + PCM batching kept alive for a whole playback session, so
 // consecutive ring reads continue the same decode stream.
 struct Mp3Pipeline {
@@ -68,24 +65,10 @@ struct Mp3Pipeline {
 
     bool Open(const std::atomic<bool>& stop) {
         stopping = &stop;
-        // Decoder registration is process-global; music/notify code unregisters
-        // it, so serialize registration and open against other playback tasks.
-        std::lock_guard<std::mutex> lock(g_dec_mutex);
         esp_audio_simple_dec_cfg_t cfg = {};
         cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         cfg.use_frame_dec = false;
-        esp_audio_err_t ret = esp_audio_simple_dec_open(&cfg, &dec);
-        if ((ret != ESP_AUDIO_ERR_OK || dec == nullptr) && !g_dec_registered_once) {
-            // NotifyPlayer unregisters the process-wide decoder table when it
-            // stops; restore it once, then retry. Registering on every session
-            // leaks registry entries and fragments internal heap.
-            esp_audio_dec_register_default();
-            esp_audio_simple_dec_register_default();
-            g_dec_registered_once = true;
-            dec = nullptr;
-            ret = esp_audio_simple_dec_open(&cfg, &dec);
-        }
-        if (ret != ESP_AUDIO_ERR_OK || dec == nullptr) {
+        if (esp_audio_simple_dec_open(&cfg, &dec) != ESP_AUDIO_ERR_OK || dec == nullptr) {
             ESP_LOGE(TAG, "simple dec open failed");
             dec = nullptr;
             return false;
@@ -115,10 +98,7 @@ struct Mp3Pipeline {
         stopping = nullptr;
         ESP_LOGI(TAG, "pipeline closed: %u PCM bytes, heap %u",
                  (unsigned)pcm_bytes, (unsigned)esp_get_free_heap_size());
-        {
-            std::lock_guard<std::mutex> lock(g_dec_mutex);
-            if (dec != nullptr) esp_audio_simple_dec_close(dec);
-        }
+        if (dec != nullptr) esp_audio_simple_dec_close(dec);
         dec = nullptr;
         if (out != nullptr) free(out);
         out = nullptr;
@@ -195,16 +175,6 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
     stopping_ = false;
     skip_requested_ = false;
     feed_done_ = false;
-    // Register once up front so the first decoder open doesn't log a spurious
-    // "not registered" before the retry path.
-    {
-        std::lock_guard<std::mutex> lock(g_dec_mutex);
-        if (!g_dec_registered_once) {
-            esp_audio_dec_register_default();
-            esp_audio_simple_dec_register_default();
-            g_dec_registered_once = true;
-        }
-    }
     // Decode/playback runs on its own task so a reconnect or a slow HTTP Range
     // fetch can never starve the I2S output.
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
@@ -274,13 +244,19 @@ EbookPlayer::Status EbookPlayer::GetStatus() const {
 
 bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, int speed) {
     if (text.empty()) return false;
-    auto& session = EdgeSession::GetInstance();
+    auto& session = EdgeSession::GetTestInstance();
+    if (!AudioDecoderRegistry::GetInstance().Acquire()) {
+        ESP_LOGE(TAG, "cannot acquire audio decoders for test");
+        return false;
+    }
     if (!session.Connect(voice.empty() ? TtsGetVoice() : voice, speed)) {
         ESP_LOGE(TAG, "test connect failed");
+        AudioDecoderRegistry::GetInstance().Release();
         return false;
     }
     if (!session.Speak(text)) {
         session.Disconnect();
+        AudioDecoderRegistry::GetInstance().Release();
         return false;
     }
     active_ = true;
@@ -297,6 +273,7 @@ bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, in
         pipe.Close();
     }
     session.Disconnect();
+    AudioDecoderRegistry::GetInstance().Release();
     active_ = false;
     return true;
 }
@@ -413,6 +390,13 @@ void EbookPlayer::SynthTask(void* arg) {
 void EbookPlayer::PlayTask(void* arg) {
     auto* self = static_cast<EbookPlayer*>(arg);
     auto& session = EdgeSession::GetInstance();
+    if (!AudioDecoderRegistry::GetInstance().Acquire()) {
+        ESP_LOGE(TAG, "cannot acquire audio decoders");
+        self->active_ = false;
+        self->play_task_ = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
     Mp3Pipeline pipe;
     if (pipe.Open(self->stopping_)) {
         while (!self->stopping_) {
@@ -423,6 +407,7 @@ void EbookPlayer::PlayTask(void* arg) {
         }
         pipe.Close();
     }
+    AudioDecoderRegistry::GetInstance().Release();
     if (self->feed_done_ && !self->stopping_) {
         SaveProgress(self->book_url_, 0, 0);  // finished: start over next time
         ESP_LOGI(TAG, "Book finished");

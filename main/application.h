@@ -189,6 +189,9 @@ public:
     bool IsRadioPlaying() const { return radio_playing_; }
     std::string GetPlaybackTitle() const;
     void SetRadioPlaying(bool playing);
+    // 外部音源（电台/音乐/电子书）播放期间禁止降 WiFi 节能等级
+    bool IsExternalPlaybackActive() const;
+    void SetLowPowerIfIdle();
     void SetRadioStopHandler(std::function<void()> handler) { radio_stop_handler_ = std::move(handler); }
     void SetRadioStartHandler(std::function<void(const std::string&)> handler) {
         radio_start_handler_ = std::move(handler);

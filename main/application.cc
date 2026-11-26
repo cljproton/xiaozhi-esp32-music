@@ -726,7 +726,7 @@ void Application::CheckAssetsVersion() {
                 });
             });
 
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        SetLowPowerIfIdle();
         vTaskDelay(pdMS_TO_TICKS(1000));
 
         if (!success) {
@@ -879,8 +879,8 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    protocol_->OnAudioChannelClosed([this]() {
+        SetLowPowerIfIdle();
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -1533,7 +1533,7 @@ bool Application::StartNotification(std::string audio_url, std::vector<NotifySub
     }
 
     if (!SetDeviceState(kDeviceStateNotifying)) {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        SetLowPowerIfIdle();
         return false;
     }
 
@@ -1578,7 +1578,7 @@ void Application::StopNotification(bool force) {
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
-    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    SetLowPowerIfIdle();
     SetBacklightForPlayback(false);
     if (GetDeviceState() == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
@@ -1605,6 +1605,7 @@ void Application::ClearMusicSessionLocked() {
 
 bool Application::StartMusic(const MusicSource& source) {
     StopNotification(true);
+    StopEbook();
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         ClearMusicSessionLocked();
@@ -1627,6 +1628,7 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
     if (tracks.empty()) {
         return false;
     }
+    StopEbook();
     if (start_index < 0 || start_index >= static_cast<int>(tracks.size())) {
         start_index = 0;
     }
@@ -1931,6 +1933,9 @@ void Application::StopMusicPlayback() {
 
 bool Application::PlayEbook(const std::string& url, const std::string& username,
                             const std::string& password) {
+    // 输出只有一个：先停掉音乐/电台，避免两路 PCM 争抢 codec
+    if (GetMusicStatus().active) StopMusicPlayback();
+    if (radio_playing_) StopRadio();
     return EbookPlayer::GetInstance().Play(url, username, password);
 }
 void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
@@ -1961,11 +1966,24 @@ std::string Application::GetPlaybackTitle() const {
     return "";
 }
 
+bool Application::IsExternalPlaybackActive() const {
+    return radio_playing_ || GetMusicStatus().active || EbookPlayer::GetInstance().IsPlaying();
+}
+
+void Application::SetLowPowerIfIdle() {
+    if (!IsExternalPlaybackActive()) {
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    }
+}
+
 void Application::SetRadioPlaying(bool playing) {
     radio_playing_ = playing;
     audio_service_.SetExternalPlaybackActive(playing);
-    Board::GetInstance().SetPowerSaveLevel(playing ? PowerSaveLevel::PERFORMANCE
-                                                  : PowerSaveLevel::LOW_POWER);
+    if (playing) {
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    } else {
+        SetLowPowerIfIdle();
+    }
     SetBacklightForPlayback(playing);
     // 电台播放期间关闭唤醒词，避免扬声器声音回灌；停止后恢复
     audio_service_.EnableVoiceProcessing(false);
@@ -1992,6 +2010,7 @@ void Application::StartRadio(const std::string& url, bool wait_for_tts) {
     if (radio_playing_) {
         StopRadio();
     }
+    StopEbook();
     // 与音乐互斥：先停掉音乐会话，避免两路 PCM 争抢 codec
     if (GetMusicStatus().active) {
         StopMusicPlayback();
@@ -2430,7 +2449,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
         ESP_LOGE(TAG,
                  "Firmware upgrade failed, restarting audio service and continuing operation...");
         audio_service_.Start();                              // Restart audio service
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);  // Restore power save level
+        SetLowPowerIfIdle();                                  // Restore power save level
         Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "cancel",
               Lang::Sounds::OGG_EXCLAMATION);
         vTaskDelay(pdMS_TO_TICKS(3000));
