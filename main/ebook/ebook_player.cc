@@ -38,28 +38,25 @@ static int LoadProgress(const std::string& url) {
     return s.GetInt(BookKey(url).c_str(), 0);
 }
 
-static void SaveProgress(const std::string& url, int paragraph) {
+static void SaveProgress(const std::string& url, int byte_offset) {
     Settings s("ebook", true);
-    s.SetInt(BookKey(url).c_str(), paragraph);
+    s.SetInt(BookKey(url).c_str(), byte_offset);
 }
 
 bool EbookPlayer::Play(const std::string& url, const std::string& username,
                        const std::string& password) {
     if (active_) Stop();
-    auto book = EbookLoad(url, username, password);
-    if (!book.error.empty() || book.paragraphs.empty()) {
-        ESP_LOGE(TAG, "Load failed: %s", book.error.c_str());
+    size_t saved_offset = static_cast<size_t>(LoadProgress(url));  // byte offset
+    if (!stream_.Open(url, username, password, saved_offset)) {
+        ESP_LOGE(TAG, "Open stream failed: %s", url.c_str());
         return false;
     }
-    book_ = std::move(book);
+    book_.name = url.substr(url.find_last_of('/') + 1);
     book_url_ = url;
     username_ = username;
     password_ = password;
-    int saved = LoadProgress(url);
-    paragraph_ = (saved > 0 && static_cast<size_t>(saved) < book_.paragraphs.size())
-                     ? static_cast<size_t>(saved) : 0;
-    ESP_LOGI(TAG, "Resume '%s' from paragraph %u/%u", book_.name.c_str(),
-             (unsigned)paragraph_, (unsigned)book_.paragraphs.size());
+    paragraph_ = 0;
+    ESP_LOGI(TAG, "Streaming '%s' from byte %u", book_.name.c_str(), (unsigned)saved_offset);
     active_ = true;
     paused_ = false;
     stopping_ = false;
@@ -67,7 +64,7 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
         vTaskDelete(synth_task_);
         synth_task_ = nullptr;
     }
-    xTaskCreate(SynthTask, "ebook_synth", 10240, this, 2, &synth_task_);
+    xTaskCreate(SynthTask, "ebook_synth", 16384, this, 2, &synth_task_);
     return true;
 }
 
@@ -94,10 +91,10 @@ bool EbookPlayer::Resume() {
 }
 
 bool EbookPlayer::Next() {
-    if (!active_ || paragraph_ + 1 >= book_.paragraphs.size()) return false;
-    ++paragraph_;
-    if (!book_url_.empty()) SaveProgress(book_url_, static_cast<int>(paragraph_));
-    stopping_ = true;  // interrupt current decode loop; synth task advances
+    if (!active_) return false;
+    // Skip the current sentence: just interrupt decode; the loop will fetch
+    // the next sentence from the stream.
+    stopping_ = true;
     return true;
 }
 
@@ -107,7 +104,7 @@ EbookPlayer::Status EbookPlayer::GetStatus() const {
     s.paused = paused_;
     s.book_name = book_.name;
     s.paragraph = paragraph_;
-    s.total = book_.paragraphs.size();
+    s.total = stream_.TotalBytes() > 0 ? stream_.TotalBytes() / 6 : 0;  // rough sentence estimate
     return s;
 }
 
@@ -252,13 +249,21 @@ void EbookPlayer::SynthTask(void* arg) {
 }
 
 void EbookPlayer::SynthesizeAndPlay() {
-    if (!active_ || stopping_ || paragraph_ >= book_.paragraphs.size()) {
+    if (!active_ || stopping_) {
         active_ = false;
         return;
     }
+    std::string sentence;
+    if (!stream_.NextSentence(sentence)) {
+        ESP_LOGI(TAG, "Book finished");
+        if (!book_url_.empty()) SaveProgress(book_url_, 0);  // finished: reset
+        active_ = false;
+        return;
+    }
+    if (sentence.empty()) return;
     stream_data_.clear();
     TtsRequest req;
-    req.text = book_.paragraphs[paragraph_];
+    req.text = sentence;
     req.voice = TtsGetVoice();
     req.speed = TtsGetSpeed();
     req.on_audio = [this](const uint8_t* data, size_t len) {
@@ -268,7 +273,7 @@ void EbookPlayer::SynthesizeAndPlay() {
     req.on_done = [&done](bool, const std::string&) { done = true; };
     bool ok = TtsSynthesize(req);
     if (!ok || stream_data_.empty()) {
-        ESP_LOGE(TAG, "TTS failed for paragraph %u", (unsigned)paragraph_);
+        ESP_LOGE(TAG, "TTS failed for sentence %u", (unsigned)paragraph_);
         active_ = false;
         return;
     }
@@ -278,5 +283,6 @@ void EbookPlayer::SynthesizeAndPlay() {
         return;
     }
     ++paragraph_;
-    if (!book_url_.empty()) SaveProgress(book_url_, static_cast<int>(paragraph_));
+    // Save byte offset for precise resume (stream_ position tracks raw file).
+    if (!book_url_.empty()) SaveProgress(book_url_, static_cast<int>(stream_.Position()));
 }

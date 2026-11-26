@@ -6,6 +6,7 @@
 #include <string>
 
 #include "ebook_reader.h"
+#include "text_stream.h"
 #include <esp_audio_simple_dec.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -47,8 +48,10 @@ private:
     std::atomic<bool> paused_{false};
     std::atomic<bool> stopping_{false};
     EbookBook book_;
+    TextStream stream_;
     std::string book_url_;
     size_t paragraph_ = 0;
+    size_t book_offset_ = 0;  // saved byte offset for resume
     std::string username_;
     std::string password_;
     std::string stream_data_;

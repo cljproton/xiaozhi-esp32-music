@@ -55,7 +55,9 @@ set(SOURCES "audio/audio_codec.cc"
             "tts/tts_client.cc"
             "tts/edge_token.c"
             "ebook/ebook_reader.cc"
+            "ebook/text_stream.cc"
             "ebook/ebook_player.cc"
+            "tts/audio_ring.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui" "tts" "ebook")

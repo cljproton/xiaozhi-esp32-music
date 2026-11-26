@@ -243,7 +243,10 @@ bool EdgeSynthesize(const TtsRequest& req) {
     }
     esp_websocket_client_close(client, pdMS_TO_TICKS(1000));
     esp_websocket_client_destroy(client);
-    bool ok = !ctx.buffer.empty() && ctx.error.empty();  // audio received = success
+    // Server closes the connection right after streaming audio; that surfaces
+    // as a transport ERROR event even though synthesis succeeded. Audio bytes
+    // are the authoritative success signal.
+    bool ok = !ctx.buffer.empty();
     ESP_LOGI(TAG, "Edge TTS result: %s (%u audio bytes)", ok ? "ok" : "failed",
              (unsigned)ctx.buffer.size());
     if (ok && !ctx.buffer.empty() && req.on_audio) {
