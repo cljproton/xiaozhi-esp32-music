@@ -3,8 +3,6 @@
 
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
-#include <algorithm>
-#include <cctype>
 #include <esp_log.h>
 #include <esp_netif.h>
 
@@ -21,18 +19,6 @@ StaticNetworkConfig LoadStatic() {
     c.gateway = s.GetString("gateway", "");
     c.dns1 = s.GetString("dns1", "");
     c.dns2 = s.GetString("dns2", "");
-    return c;
-}
-
-ProxyConfig LoadProxy() {
-    Settings s("proxy", false);
-    ProxyConfig c;
-    c.enabled = s.GetBool("enabled", false);
-    c.type = s.GetString("type", "http");
-    c.host = s.GetString("host", "");
-    c.port = s.GetInt("port", 0);
-    c.username = s.GetString("username", "");
-    c.password = s.GetString("password", "");
     return c;
 }
 
@@ -63,24 +49,6 @@ void ApplyStaticIp() {
     set_dns(ESP_NETIF_DNS_MAIN, c.dns1);
     set_dns(ESP_NETIF_DNS_BACKUP, c.dns2);
     ESP_LOGI(TAG, "static IP applied: %s", c.ip.c_str());
-}
-
-bool IsLocalOrLanHost(const std::string& host) {
-    std::string lower = host;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    if ((lower == "localhost" || (lower.size() >= 6 &&
-        lower.compare(lower.size() - 6, 6, ".local") == 0))) return true;
-    struct in_addr addr;
-    if (inet_pton(AF_INET, host.c_str(), &addr) == 1) {
-        auto* b = reinterpret_cast<const uint8_t*>(&addr);
-        return b[0] == 127 || b[0] == 10 || b[0] == 0 ||
-               (b[0] == 192 && b[1] == 168) ||
-               (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
-               (b[0] == 169 && b[1] == 254);
-    }
-    return lower.rfind("::1", 0) == 0 || lower.rfind("fe80", 0) == 0 ||
-           lower.rfind("fc", 0) == 0 || lower.rfind("fd", 0) == 0;
 }
 
 }  // namespace NetworkSettings

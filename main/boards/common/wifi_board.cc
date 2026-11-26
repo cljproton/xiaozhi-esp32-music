@@ -5,7 +5,6 @@
 #include "system_info.h"
 #include "settings.h"
 #include "network/network_config.h"
-#include "network/proxy_network.h"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
@@ -261,7 +260,7 @@ bool WifiBoard::IsInWifiConfigMode() const {
 
 NetworkInterface* WifiBoard::GetNetwork() {
     static EspNetwork network;
-    return &ProxyNetwork::Instance(&network);
+    return &network;
 }
 
 const char* WifiBoard::GetNetworkStateIcon() {

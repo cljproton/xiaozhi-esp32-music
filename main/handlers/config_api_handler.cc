@@ -72,18 +72,6 @@ button:disabled{opacity:0.4;cursor:default}
   </div>
 
   <div class="card">
-    <h2 data-i18n="proxy_title">网络代理</h2>
-    <div class="check"><input type="checkbox" id="proxy-enable"><label for="proxy-enable" data-i18n="proxy_enable">启用代理</label></div>
-    <label for="proxy-type" data-i18n="proxy_type">类型</label>
-    <select id="proxy-type"><option value="http">HTTP CONNECT</option><option value="socks5">SOCKS5</option></select>
-    <div class="row"><input id="proxy-host" placeholder="127.0.0.1"><input id="proxy-port" type="number" min="1" max="65535" placeholder="1080"></div>
-    <div class="row"><input id="proxy-user" placeholder="用户名（可选）"><input id="proxy-pass" type="password" autocomplete="new-password" placeholder="密码（可选）"></div>
-    <button id="btn-proxy" type="button" data-i18n="save_proxy">保存代理设置</button>
-    <div class="hint" data-i18n="proxy_hint">HTTP CONNECT / SOCKS5 隧道用于设备的 HTTP/HTTPS/WebSocket 请求；UDP 与 MQTT/UDP 不走代理。密码留空表示不修改。</div>
-    <div id="msg-proxy"></div>
-  </div>
-
-  <div class="card">
     <h2 data-i18n="pwd_title">修改密码</h2>
     <label for="old" data-i18n="old_pwd">当前密码</label><input id="old" type="password" autocomplete="current-password">
     <label for="new" data-i18n="new_pwd">新密码</label><input id="new" type="password" autocomplete="new-password">
@@ -110,8 +98,8 @@ const $=id=>document.getElementById(id);
 const LANG_KEY='lang';
 let lang=localStorage.getItem(LANG_KEY)==='en'?'en':'zh';
 const I18N={
-zh:{nav_home:'🏠 首页',nav_music:'🎵 音乐',nav_book:'📖 电子书',nav_radio:'📻 电台',title:'设备配置',lang_title:'界面语言',lang_label:'语言 / Language',lang_hint:'切换后所有页面立即使用所选语言。',net_title:'静态 IP（下次连接网络后生效）',net_enable:'使用静态 IP（关闭则自动获取 DHCP）',save_net:'保存网络设置',net_hint:'留空的 DNS 不覆盖原值；配置在下次 Wi-Fi 连接或重启后生效。',proxy_title:'网络代理',proxy_enable:'启用代理',proxy_type:'类型',save_proxy:'保存代理设置',proxy_hint:'HTTP CONNECT / SOCKS5 隧道用于公网 HTTP/HTTPS/WebSocket 请求；本地地址与局域网直连不走代理。UDP 与 MQTT/UDP 不走代理。密码留空表示不修改。',pwd_title:'修改密码',old_pwd:'当前密码',new_pwd:'新密码',change_pwd:'修改密码',sleep_title:'睡眠模式',sleep_enable:'启用睡眠模式',sleep_off_at:'每天关机时间 (HH:MM，留空不定时关机)',sleep_off_min:'空闲多少分钟后关机 (0=不关机)',sleep_hint:'• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行',save_sleep:'保存睡眠设置',pwd_ok:'密码已修改',pwd_fail:'修改失败，请检查当前密码',sleep_ok:'睡眠设置已保存',sleep_fail:'保存失败',net_ok:'网络设置已保存，下次连接生效',net_fail:'保存失败',proxy_ok:'代理设置已保存',proxy_fail:'保存失败'},
-en:{nav_home:'🏠 Home',nav_music:'🎵 Music',nav_book:'📖 Books',nav_radio:'📻 Radio',title:'Settings',lang_title:'Language',lang_label:'界面语言 / Language',lang_hint:'All pages switch to the selected language immediately.',net_title:'Static IP (applies on next network connection)',net_enable:'Use static IP (off = DHCP)',save_net:'Save network settings',net_hint:'Empty DNS fields keep their previous values. Changes apply on the next Wi-Fi connection or reboot.',proxy_title:'Network proxy',proxy_enable:'Enable proxy',proxy_type:'Type',save_proxy:'Save proxy settings',proxy_hint:'HTTP CONNECT / SOCKS5 tunnels public HTTP, HTTPS and WebSocket requests. Local and LAN addresses connect directly. UDP and MQTT/UDP are not proxied. Leave the password empty to keep the old one.',pwd_title:'Change password',old_pwd:'Current password',new_pwd:'New password',change_pwd:'Change password',sleep_title:'Sleep mode',sleep_enable:'Enable sleep mode',sleep_off_at:'Daily power-off time (HH:MM, empty = none)',sleep_off_min:'Power off after idle minutes (0 = off)',sleep_hint:'• Scheduled: power off daily at a fixed time<br>• Idle: power off after N minutes without activity<br>• Battery power really powers off; on USB the device only signals shutdown',save_sleep:'Save sleep settings',pwd_ok:'Password changed',pwd_fail:'Failed: check your current password',sleep_ok:'Sleep settings saved',sleep_fail:'Save failed',net_ok:'Network settings saved; applies on next connection',net_fail:'Save failed',proxy_ok:'Proxy settings saved',proxy_fail:'Save failed'}};
+zh:{nav_home:'🏠 首页',nav_music:'🎵 音乐',nav_book:'📖 电子书',nav_radio:'📻 电台',title:'设备配置',lang_title:'界面语言',lang_label:'语言 / Language',lang_hint:'切换后所有页面立即使用所选语言。',net_title:'静态 IP（下次连接网络后生效）',net_enable:'使用静态 IP（关闭则自动获取 DHCP）',save_net:'保存网络设置',net_hint:'留空的 DNS 不覆盖原值；配置在下次 Wi-Fi 连接或重启后生效。',pwd_title:'修改密码',old_pwd:'当前密码',new_pwd:'新密码',change_pwd:'修改密码',sleep_title:'睡眠模式',sleep_enable:'启用睡眠模式',sleep_off_at:'每天关机时间 (HH:MM，留空不定时关机)',sleep_off_min:'空闲多少分钟后关机 (0=不关机)',sleep_hint:'• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行',save_sleep:'保存睡眠设置',pwd_ok:'密码已修改',pwd_fail:'修改失败，请检查当前密码',sleep_ok:'睡眠设置已保存',sleep_fail:'保存失败',net_ok:'网络设置已保存，下次连接生效',net_fail:'保存失败'},
+en:{nav_home:'🏠 Home',nav_music:'🎵 Music',nav_book:'📖 Books',nav_radio:'📻 Radio',title:'Settings',lang_title:'Language',lang_label:'界面语言 / Language',lang_hint:'All pages switch to the selected language immediately.',net_title:'Static IP (applies on next network connection)',net_enable:'Use static IP (off = DHCP)',save_net:'Save network settings',net_hint:'Empty DNS fields keep their previous values. Changes apply on the next Wi-Fi connection or reboot.',pwd_title:'Change password',old_pwd:'Current password',new_pwd:'New password',change_pwd:'Change password',sleep_title:'Sleep mode',sleep_enable:'Enable sleep mode',sleep_off_at:'Daily power-off time (HH:MM, empty = none)',sleep_off_min:'Power off after idle minutes (0 = off)',sleep_hint:'• Scheduled: power off daily at a fixed time<br>• Idle: power off after N minutes without activity<br>• Battery power really powers off; on USB the device only signals shutdown',save_sleep:'Save sleep settings',pwd_ok:'Password changed',pwd_fail:'Failed: check your current password',sleep_ok:'Sleep settings saved',sleep_fail:'Save failed',net_ok:'Network settings saved; applies on next connection',net_fail:'Save failed'}};
 const T=k=>I18N[lang][k]||I18N.zh[k]||k;
 function applyLang(){document.documentElement.lang=lang;document.title=T('title');document.querySelectorAll('[data-i18n]').forEach(el=>{el.innerHTML=T(el.getAttribute('data-i18n'))});$('lang-select').value=lang}
 $('lang-select').addEventListener('change',e=>{lang=e.target.value;localStorage.setItem(LANG_KEY,lang);applyLang()});
@@ -146,7 +134,6 @@ async function loadSleep(){
   }
   if(d.sleep_off_min!==undefined && d.sleep_off_min>=0) $('sleep-off-min').value=d.sleep_off_min;
   const n=d.network||{};$('net-enable').checked=!!n.static_enabled;$('net-ip').value=n.ip||'';$('net-mask').value=n.netmask||'';$('net-gw').value=n.gateway||'';$('net-dns1').value=n.dns1||'';$('net-dns2').value=n.dns2||'';
-  const p=d.proxy||{};$('proxy-enable').checked=!!p.enabled;$('proxy-type').value=p.type||'http';$('proxy-host').value=p.host||'';$('proxy-port').value=p.port||'';$('proxy-user').value=p.username||'';if(p.password_set)$('proxy-pass').placeholder='••••••';
 }
 $('btn-sleep').addEventListener('click',async()=>{
   const body={sleep_mode:se.checked};
@@ -162,11 +149,6 @@ $('btn-sleep').addEventListener('click',async()=>{
 $('btn-net').addEventListener('click',async()=>{
   const d=await api('/api/config',{method:'POST',body:JSON.stringify({network:{static_enabled:$('net-enable').checked,ip:$('net-ip').value.trim(),netmask:$('net-mask').value.trim(),gateway:$('net-gw').value.trim(),dns1:$('net-dns1').value.trim(),dns2:$('net-dns2').value.trim()}})});
   showMsg('msg-net',d.status==='ok'?T('net_ok'):T('net_fail'),d.status==='ok');
-});
-$('btn-proxy').addEventListener('click',async()=>{
-  const d=await api('/api/config',{method:'POST',body:JSON.stringify({proxy:{enabled:$('proxy-enable').checked,type:$('proxy-type').value,host:$('proxy-host').value.trim(),port:parseInt($('proxy-port').value)||0,username:$('proxy-user').value.trim(),password:$('proxy-pass').value}})});
-  showMsg('msg-proxy',d.status==='ok'?T('proxy_ok'):T('proxy_fail'),d.status==='ok');
-  $('proxy-pass').value='';
 });
 loadSleep();
 </script>
@@ -247,14 +229,6 @@ esp_err_t HandleConfigGet(httpd_req_t* req) {
     cJSON_AddStringToObject(net_json, "dns1", net.dns1.c_str());
     cJSON_AddStringToObject(net_json, "dns2", net.dns2.c_str());
 
-    auto proxy = NetworkSettings::LoadProxy();
-    cJSON* proxy_json = cJSON_AddObjectToObject(root, "proxy");
-    cJSON_AddBoolToObject(proxy_json, "enabled", proxy.enabled);
-    cJSON_AddStringToObject(proxy_json, "type", proxy.type.c_str());
-    cJSON_AddStringToObject(proxy_json, "host", proxy.host.c_str());
-    cJSON_AddNumberToObject(proxy_json, "port", proxy.port);
-    cJSON_AddStringToObject(proxy_json, "username", proxy.username.c_str());
-    cJSON_AddBoolToObject(proxy_json, "password_set", !proxy.password.empty());
     return SendJson(req, root);
 }
 
@@ -302,26 +276,6 @@ esp_err_t HandleConfigPost(httpd_req_t* req) {
             std::string value = JsonString(net_item, key);
             if (value.empty() || ValidIpv4(value)) s.SetString(key, value);
         }
-    }
-
-    // Proxy (socks5 / http)
-    auto* proxy_item = cJSON_GetObjectItem(root, "proxy");
-    if (cJSON_IsObject(proxy_item)) {
-        Settings s("proxy", true);
-        auto* enabled = cJSON_GetObjectItem(proxy_item, "enabled");
-        if (cJSON_IsBool(enabled)) s.SetBool("enabled", cJSON_IsTrue(enabled));
-        std::string type = JsonString(proxy_item, "type");
-        if (type == "http" || type == "socks5") s.SetString("type", type);
-        std::string host = JsonString(proxy_item, "host");
-        if (!host.empty()) s.SetString("host", host);
-        auto* port = cJSON_GetObjectItem(proxy_item, "port");
-        if (cJSON_IsNumber(port) && port->valueint > 0 && port->valueint <= 65535) {
-            s.SetInt("port", port->valueint);
-        }
-        std::string username = JsonString(proxy_item, "username");
-        if (!username.empty()) s.SetString("username", username);
-        std::string password = JsonString(proxy_item, "password");
-        if (!password.empty()) s.SetString("password", password);
     }
 
     cJSON_Delete(root);

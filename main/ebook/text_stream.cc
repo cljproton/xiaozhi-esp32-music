@@ -1,12 +1,12 @@
 #include "text_stream.h"
 #include "ebook_reader.h"
 #include "board.h"
-#include "network/network_config.h"
 
 #include <mbedtls/base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
 #include <cstdio>
+#include <cstring>
 
 #define TAG "TextStream"
 
@@ -79,7 +79,7 @@ void TextStream::Close() {
 
 bool TextStream::Refill() {
     if (eof_ || url_.empty()) return false;
-    // Use the shared Http interface so Range reads honour the global proxy.
+    // Shared Http layer keeps Range reads consistent with other network paths.
     auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
     if (!http) return false;
     http->SetTimeout(20000);
@@ -91,6 +91,9 @@ bool TextStream::Refill() {
         std::string b64(olen, '\0');
         mbedtls_base64_encode(reinterpret_cast<unsigned char*>(b64.data()), b64.size(), &olen,
                               reinterpret_cast<const unsigned char*>(cred.data()), cred.size());
+        // mbedtls counts the terminating NUL; a NUL inside the header makes the
+        // server reject the Range request with 400.
+        b64.resize(strlen(b64.c_str()));
         http->SetHeader("Authorization", "Basic " + b64);
     }
     char hdr[64];
