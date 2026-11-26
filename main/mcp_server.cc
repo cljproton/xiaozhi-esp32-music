@@ -1246,9 +1246,9 @@ __attribute__((noinline)) std::expected<std::vector<Application::MusicSource>, s
 McpServer::ListMusicTracks(const std::string& source, bool* truncated, int offset,
                            int limit, int* total) {
     int matched = 0;
-    auto listing = (limit > 0)
-                       ? ListWebdavPage(source, offset, limit, &matched, true)
-                       : ListWebdav(source);
+    // Always filter by audio extension: the raw ListWebdav result also contains
+    // directories and non-audio files, which would shift track indices.
+    auto listing = ListWebdavPage(source, offset, limit, &matched, true);
     if (!listing) {
         return std::unexpected(listing.error());
     }
@@ -1298,7 +1298,6 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated, int offse
             tracks.push_back(std::move(track));
         }
     }
-    if (limit <= 0 && total != nullptr) *total = static_cast<int>(tracks.size());
     return tracks;
 }
 

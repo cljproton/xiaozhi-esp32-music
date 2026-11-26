@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <tuple>
@@ -48,6 +49,10 @@ void SaveProgress(const std::string& url, size_t raw, size_t text) {
 constexpr int kOutSize = 4096;
 constexpr size_t kBatchSamples = 12000;  // 0.5s at 24kHz
 
+// Decoder registry is process-global and other players unregister it.
+std::mutex g_dec_mutex;
+bool g_dec_registered_once = false;
+
 // One MP3 decoder + PCM batching kept alive for a whole playback session, so
 // consecutive ring reads continue the same decode stream.
 struct Mp3Pipeline {
@@ -63,16 +68,24 @@ struct Mp3Pipeline {
 
     bool Open(const std::atomic<bool>& stop) {
         stopping = &stop;
-        static bool registered = false;
-        if (!registered) {
-            esp_audio_dec_register_default();
-            esp_audio_simple_dec_register_default();
-            registered = true;
-        }
+        // Decoder registration is process-global; music/notify code unregisters
+        // it, so serialize registration and open against other playback tasks.
+        std::lock_guard<std::mutex> lock(g_dec_mutex);
         esp_audio_simple_dec_cfg_t cfg = {};
         cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         cfg.use_frame_dec = false;
-        if (esp_audio_simple_dec_open(&cfg, &dec) != ESP_AUDIO_ERR_OK || dec == nullptr) {
+        esp_audio_err_t ret = esp_audio_simple_dec_open(&cfg, &dec);
+        if ((ret != ESP_AUDIO_ERR_OK || dec == nullptr) && !g_dec_registered_once) {
+            // NotifyPlayer unregisters the process-wide decoder table when it
+            // stops; restore it once, then retry. Registering on every session
+            // leaks registry entries and fragments internal heap.
+            esp_audio_dec_register_default();
+            esp_audio_simple_dec_register_default();
+            g_dec_registered_once = true;
+            dec = nullptr;
+            ret = esp_audio_simple_dec_open(&cfg, &dec);
+        }
+        if (ret != ESP_AUDIO_ERR_OK || dec == nullptr) {
             ESP_LOGE(TAG, "simple dec open failed");
             dec = nullptr;
             return false;
@@ -99,12 +112,16 @@ struct Mp3Pipeline {
 
     void Close() {
         Flush();
+        stopping = nullptr;
         ESP_LOGI(TAG, "pipeline closed: %u PCM bytes, heap %u",
                  (unsigned)pcm_bytes, (unsigned)esp_get_free_heap_size());
+        {
+            std::lock_guard<std::mutex> lock(g_dec_mutex);
+            if (dec != nullptr) esp_audio_simple_dec_close(dec);
+        }
+        dec = nullptr;
         if (out != nullptr) free(out);
         out = nullptr;
-        if (dec != nullptr) esp_audio_simple_dec_close(dec);
-        dec = nullptr;
     }
 
     void Drain(EdgeSession& session) {
@@ -153,6 +170,13 @@ EbookPlayer::EbookPlayer() = default;
 bool EbookPlayer::Play(const std::string& url, const std::string& username,
                        const std::string& password) {
     if (active_) Stop();
+    // Let the previous session's tasks release the stream, session and decoder
+    // before reusing them; force-deleting a task holding a lock corrupts heap.
+    for (int i = 0; i < 250 && (synth_task_ != nullptr || play_task_ != nullptr); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    // Discard any audio left in the ring from the previous book.
+    EdgeSession::GetInstance().Reset();
     size_t raw = 0, text = 0;
     LoadProgress(url, raw, text);
     if (!stream_.Open(url, username, password, raw, text)) {
@@ -171,26 +195,30 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
     stopping_ = false;
     skip_requested_ = false;
     feed_done_ = false;
-    if (synth_task_) {
-        vTaskDelete(synth_task_);
-        synth_task_ = nullptr;
+    // Register once up front so the first decoder open doesn't log a spurious
+    // "not registered" before the retry path.
+    {
+        std::lock_guard<std::mutex> lock(g_dec_mutex);
+        if (!g_dec_registered_once) {
+            esp_audio_dec_register_default();
+            esp_audio_simple_dec_register_default();
+            g_dec_registered_once = true;
+        }
     }
     // Decode/playback runs on its own task so a reconnect or a slow HTTP Range
     // fetch can never starve the I2S output.
-    xTaskCreatePinnedToCore(PlayTask, "ebook_play", 12288, this, 4, &play_task_, 1);
-    xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 20480, this, 2, &synth_task_, 0);
+    xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
+    xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 12288, this, 2, &synth_task_, 0);
     return true;
 }
 
 void EbookPlayer::Stop() {
+    // Only signal the tasks; they own the stream, EdgeSession and decoder and
+    // release them on exit. Touching those objects here races with in-flight
+    // HTTP reads and can corrupt the heap.
     stopping_ = true;
-    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
-    vTaskDelay(pdMS_TO_TICKS(400));
     active_ = false;
-    paused_ = false;
-    EdgeSession::GetInstance().Disconnect();
-    stream_.Close();
-    stopping_ = false;
+    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
 }
 
 bool EbookPlayer::Pause() {
@@ -211,13 +239,36 @@ bool EbookPlayer::Next() {
     return true;
 }
 
+bool EbookPlayer::Seek(int percent) {
+    if (!active_ || percent < 0 || percent > 100) return false;
+    size_t total = stream_.TotalBytes();
+    if (total == 0) return false;
+    stopping_ = true;
+    for (int i = 0; i < 250 && (synth_task_ != nullptr || play_task_ != nullptr); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    size_t offset = total * static_cast<size_t>(percent) / 100;
+    if (!stream_.Open(book_url_, username_, password_, offset, 0)) return false;
+    EdgeSession::GetInstance().Reset();
+    paragraph_ = static_cast<size_t>(percent) * (total / 120) / 100;
+    ESP_LOGI(TAG, "Seek to %d%% (raw offset %u)", percent, (unsigned)offset);
+    active_ = true;
+    paused_ = false;
+    stopping_ = false;
+    skip_requested_ = false;
+    feed_done_ = false;
+    xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
+    xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 12288, this, 2, &synth_task_, 0);
+    return true;
+}
+
 EbookPlayer::Status EbookPlayer::GetStatus() const {
     Status s;
     s.active = active_;
     s.paused = paused_;
     s.book_name = book_.name;
     s.paragraph = paragraph_;
-    s.total = stream_.TotalBytes() > 0 ? stream_.TotalBytes() / 6 : 0;
+    s.total = stream_.TotalBytes() > 0 ? stream_.TotalBytes() / 120 : 0;
     return s;
 }
 
@@ -265,7 +316,7 @@ void EbookPlayer::SynthTask(void* arg) {
     auto* self = static_cast<EbookPlayer*>(arg);
     auto& session = EdgeSession::GetInstance();
     auto bail = [&]() {
-        session.Disconnect();
+        // Keep a healthy session alive for the next book; Connect() reuses it.
         self->synth_task_ = nullptr;
         vTaskDelete(nullptr);
     };

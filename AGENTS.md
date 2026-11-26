@@ -59,8 +59,20 @@ idf.py --version
 # Discover exact board and variant names
 python3 scripts/build.py --list-boards
 
-# Canonical variant build
+# Canonical variant build (configures build/ + sdkconfig)
 python3 scripts/build.py <board-directory> --name <variant-name>
+
+# Incremental firmware build with ninja (preferred after source edits)
+ninja -C build
+
+# Flash with esptool (adjust chip/flash size and image paths per board)
+python3 -m esptool --chip <chip> -b 460800 --before default-reset --after hard-reset write-flash \
+  --flash-mode dio --flash-freq 80m --flash-size <size> \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0x15000 build/ota_data_initial.bin \
+  0x20000 build/xiaozhi.bin \
+  0x800000 build/generated_assets.bin
 
 # Host-side build tests
 python3 -m unittest discover -s scripts/tests -v

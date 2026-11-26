@@ -85,7 +85,7 @@ button:disabled{opacity:.4}
 
 <div class="player"><div class="inner">
   <div class="np-title" id="np-title">未播放</div>
-  <div class="progress"><span id="pg-cur">0</span><input id="pg" type="range" min="0" max="1" step="1" disabled><span id="pg-total">0</span></div>
+  <div class="progress"><span id="pg-cur">0</span><input id="pg" type="range" min="0" max="1" step="1"><span id="pg-total">0</span></div>
   <div class="row" style="margin-top:8px">
     <button id="btn-prev" data-i18n="prev_chap">上一章</button><button id="btn-toggle" data-i18n="play">播放</button>
     <button id="btn-next" data-i18n="next_chap">下一章</button><button id="btn-stop" data-i18n="stop">停止</button>
@@ -109,7 +109,7 @@ function toggleHttp(){$('http-cfg').classList.toggle('hidden',$('tts-provider').
 $('tts-provider').addEventListener('change',toggleHttp);
 $('tts-speed').addEventListener('input',()=>$('speed-val').textContent=$('tts-speed').value);
 $('btn-tts-save').addEventListener('click',async()=>{setMsg('tts-msg',tr('saving'),'info');const d=await api('/api/ebook/tts-config',{method:'POST',body:JSON.stringify({provider:$('tts-provider').value,voice:$('tts-voice').value,speed:parseInt($('tts-speed').value),url:$('tts-url').value,api_key:$('tts-key').value,source_url:$('book-url').value.trim(),source_user:$('book-user').value,source_pass:$('book-pass').value})});setMsg('tts-msg',d.status==='ok'?tr('saved'):tr('failed'),d.status==='ok'?'ok':'err');setTimeout(()=>setMsg('tts-msg',''),3000)});
-async function loadStatus(){const d=await api('/api/ebook/status');$('np-title').textContent=d.active?(d.book||tr('playing'))+(d.total?(' · '+tr('chapter')+' '+(d.paragraph+1)+'/'+d.total+tr('chapters')):''):tr('not_playing');$('pg-cur').textContent=d.paragraph||0;$('pg-total').textContent=d.total||0;$('pg').max=d.total||1;$('pg').value=d.paragraph||0;$('btn-toggle').textContent=d.paused?tr('resume'):(d.active?tr('pause'):tr('play'))}
+async function loadStatus(){const d=await api('/api/ebook/status');$('np-title').textContent=d.active?(d.book||tr('playing'))+(d.total?(' · '+tr('chapter')+' '+(d.paragraph+1)+'/'+d.total+tr('chapters')):''):tr('not_playing');$('pg-cur').textContent=d.paragraph||0;$('pg-total').textContent=d.total||0;$('pg').max=d.total||1;if(document.activeElement!==$('pg'))$('pg').value=d.paragraph||0;$('btn-toggle').textContent=d.paused?tr('resume'):(d.active?tr('pause'):tr('play'))}
 let bookTotal=0;let bookPage=1;let bookPages=1;const PAGE_SIZE=20;
 function renderBooks(list){$('book-list').innerHTML=list.map(b=>'<div class="book-item" data-url="'+esc(b.url)+'"><span class="name">📖 '+esc(b.name)+'</span>'+(b.progress>0?'<span class="prog">'+tr('read')+' '+b.progress+'</span>':'')+'<button>'+tr('play')+'</button></div>').join('');$('book-list').querySelectorAll('.book-item').forEach(el=>{el.addEventListener('click',()=>playBook(el.dataset.url));el.querySelector('button').addEventListener('click',e=>{e.stopPropagation();playBook(el.dataset.url)})});$('book-page').textContent=bookPage+'/'+bookPages+' · '+bookTotal+' 本';$('book-prev').disabled=bookPage<=1;$('book-next').disabled=bookPage>=bookPages}
 $('book-prev').addEventListener('click',()=>{if(bookPage>1)loadBooks(bookPage-1)});
@@ -122,6 +122,7 @@ $('btn-tts-test').addEventListener('click',async()=>{setMsg('tts-test-msg',tr('s
 $('btn-toggle').addEventListener('click',async()=>{const d=await api('/api/ebook/status');await api(d.active?(d.paused?'/api/ebook/resume':'/api/ebook/pause'):'/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-stop').addEventListener('click',async()=>{await api('/api/ebook/stop',{method:'POST'});loadStatus()});
 $('btn-next').addEventListener('click',async()=>{await api('/api/ebook/next',{method:'POST'});loadStatus()});
+$('pg').addEventListener('change',async()=>{const max=parseInt($('pg').max,10)||1;const pct=Math.round(parseInt($('pg').value,10)*100/max);await api('/api/ebook/seek',{method:'POST',body:JSON.stringify({percent:pct})});loadStatus()});
 const volEl=$('vol');volEl.addEventListener('input',()=>{$('volume-value').textContent=volEl.value+'%'});volEl.addEventListener('change',async()=>{try{await api('/api/music/volume',{method:'POST',body:JSON.stringify({volume:+volEl.value})})}catch(e){}});
 async function loadVolume(){const d=await api('/api/music/status');if(typeof d.volume==='number'&&document.activeElement!==volEl){volEl.value=d.volume;$('volume-value').textContent=d.volume+'%'}}
 setInterval(loadStatus,2000);setInterval(loadVolume,5000);applyLang();loadTts().then(()=>loadBooks());loadVolume();

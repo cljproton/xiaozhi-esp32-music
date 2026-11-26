@@ -6,6 +6,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #define TAG "TextStream"
@@ -106,7 +107,17 @@ bool TextStream::Refill() {
         auto status = http->GetStatusCode();
         if (status && (*status == 206 || *status == 200)) {
             size_t clen = http->GetBodyLength();
-            if (clen > 0) total_bytes_ = file_offset_ + clen;
+            // For 206 the Content-Length is only this chunk; Content-Range
+            // carries the real file size. Without it the book would finish
+            // after the first 32KB chunk.
+            std::string range = http->GetResponseHeader("Content-Range");
+            size_t slash = range.find('/');
+            if (slash != std::string::npos) {
+                unsigned long long total = strtoull(range.c_str() + slash + 1, nullptr, 10);
+                if (total > 0) total_bytes_ = static_cast<size_t>(total);
+            } else if (clen > 0) {
+                total_bytes_ = file_offset_ + clen;
+            }
             std::string raw = http->ReadAll();
             if (!raw.empty()) {
                 // The fetch starts at the previous chunk's incomplete tail, so

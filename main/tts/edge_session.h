@@ -5,6 +5,7 @@
 
 #include <esp_websocket_client.h>
 #include <atomic>
+#include <mutex>
 #include <string>
 
 // Reusable Edge TTS WebSocket session. Connects once, sends speech.config
@@ -37,6 +38,7 @@ private:
     static void EventHandler(void* arg, esp_event_base_t, int32_t event, void* data);
     void WriteAudio(const uint8_t* data, size_t len);
 
+    std::recursive_mutex mutex_;  // serializes client lifecycle vs sends
     esp_websocket_client_handle_t client_ = nullptr;
     AudioRing ring_;
     std::atomic<bool> connected_{false};

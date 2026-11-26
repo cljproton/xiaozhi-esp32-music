@@ -132,6 +132,16 @@ void EdgeSession::EventHandler(void* arg, esp_event_base_t, int32_t event, void*
 }
 
 bool EdgeSession::Connect(const std::string& voice, int speed) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    // Reuse a live session across play/stop cycles: destroying and recreating
+    // the websocket client each time fragments internal heap and eventually
+    // makes xTaskCreate (Error create websocket task) fail.
+    if (connected_ && client_ != nullptr) {
+        voice_ = voice;
+        speed_ = speed;
+        ResetCounters();
+        return true;
+    }
     Disconnect();
     voice_ = voice;
     speed_ = speed;
@@ -148,9 +158,9 @@ bool EdgeSession::Connect(const std::string& voice, int speed) {
     cfg.uri = url;
     cfg.disable_auto_reconnect = true;
     cfg.buffer_size = 4096;
-    cfg.network_timeout_ms = 60000;  // server may stay quiet between sentences
+    cfg.network_timeout_ms = 15000;  // TLS/TCP connect must fail fast; retries are cheap
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.task_stack = 12288;
+    cfg.task_stack = 6144;
     cfg.user_agent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
@@ -190,12 +200,15 @@ bool EdgeSession::Connect(const std::string& voice, int speed) {
         "{\"sentenceBoundaryEnabled\":\"false\",\"wordBoundaryEnabled\":\"false\"},"
         "\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}\r\n";
     esp_websocket_client_send_text(client_, cfg_msg.c_str(), cfg_msg.size(), pdMS_TO_TICKS(5000));
-    Reset();
+    // Do NOT clear the audio ring here: a reconnect must let already received
+    // audio keep playing while the new session is set up.
+    ResetCounters();
     ESP_LOGI(TAG, "connected, speech.config sent");
     return true;
 }
 
 void EdgeSession::Disconnect() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (client_ != nullptr) {
         esp_websocket_client_close(client_, pdMS_TO_TICKS(1000));
         esp_websocket_client_destroy(client_);
@@ -206,6 +219,7 @@ void EdgeSession::Disconnect() {
 }
 
 bool EdgeSession::Speak(const std::string& text) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!connected_ || client_ == nullptr || text.empty()) return false;
     std::string esc;
     XmlEscape(text, esc);
@@ -226,6 +240,7 @@ bool EdgeSession::Speak(const std::string& text) {
 }
 
 void EdgeSession::Reset() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     ring_.Reset();
     ResetCounters();
     id3_sent_ = false;
@@ -233,6 +248,7 @@ void EdgeSession::Reset() {
 
 // Keep buffered audio; only forget the requests the old connection owed us.
 void EdgeSession::ResetCounters() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     pending_ = 0;
     done_count_ = 0;
 }
