@@ -222,6 +222,7 @@ public:
     bool EbookPause();
     bool EbookResume();
     bool EbookNext();
+    bool EbookReplay();
     bool EbookSeek(int percent);
     void TestEbookTts(const std::string& text, const std::string& voice, int speed);
 

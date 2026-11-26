@@ -152,6 +152,14 @@ esp_err_t HandlePause(httpd_req_t* req) { return HandleControl(req, 1); }
 esp_err_t HandleResume(httpd_req_t* req) { return HandleControl(req, 2); }
 esp_err_t HandleNext(httpd_req_t* req) { return HandleControl(req, 3); }
 
+esp_err_t HandleReplay(httpd_req_t* req) {
+    if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
+    bool ok = Application::GetInstance().EbookReplay();
+    cJSON* res = cJSON_CreateObject();
+    cJSON_AddStringToObject(res, "status", ok ? "ok" : "error");
+    return SendJson(req, res, ok ? "200 OK" : "400 Bad Request");
+}
+
 esp_err_t HandleSeek(httpd_req_t* req) {
     if (!web_auth::IsAuthorized(req)) return SendError(req, "401 Unauthorized", "unauthorized");
     std::string body;
@@ -306,6 +314,7 @@ void RegisterHandlers(HandlerRegistry& registry) {
     registry.Register({"/api/ebook/pause", HTTP_POST, HandlePause, nullptr}, "Ebook pause");
     registry.Register({"/api/ebook/resume", HTTP_POST, HandleResume, nullptr}, "Ebook resume");
     registry.Register({"/api/ebook/next", HTTP_POST, HandleNext, nullptr}, "Ebook next");
+    registry.Register({"/api/ebook/replay", HTTP_POST, HandleReplay, nullptr}, "Ebook replay");
     registry.Register({"/api/ebook/seek", HTTP_POST, HandleSeek, nullptr}, "Ebook seek");
     registry.Register({"/api/ebook/tts-config", HTTP_GET, HandleTtsConfigGet, nullptr}, "TTS config get");
     registry.Register({"/api/ebook/tts-config", HTTP_POST, HandleTtsConfigPost, nullptr}, "TTS config set");

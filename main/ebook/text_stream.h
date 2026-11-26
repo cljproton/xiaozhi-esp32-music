@@ -38,6 +38,7 @@ private:
     std::string username_;
     std::string password_;
     std::string buf_;         // decoded UTF-8 chunk
+    std::string raw_;         // reused raw fetch buffer (avoids 32KB realloc churn)
     size_t pos_ = 0;          // read position within buf_
     size_t file_offset_ = 0;  // next raw byte to fetch
     size_t chunk_raw_start_ = 0;

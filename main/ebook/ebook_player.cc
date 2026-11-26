@@ -200,13 +200,28 @@ void EbookPlayer::Stop() {
 bool EbookPlayer::Pause() {
     if (!active_ || paused_) return false;
     paused_ = true;
+    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+    // Actually stop the tasks so the decoder/audio queue is released; Resume
+    // restarts from the saved NVS position instead of continuing silently.
+    stopping_ = true;
+    for (int i = 0; i < 250 && (synth_task_ != nullptr || play_task_ != nullptr); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    stopping_ = false;
     return true;
 }
 
 bool EbookPlayer::Resume() {
     if (!active_ || !paused_) return false;
     paused_ = false;
-    return true;
+    return Play(book_url_, username_, password_);
+}
+
+bool EbookPlayer::Replay() {
+    if (book_url_.empty()) return false;
+    Stop();  // let the old tasks flush their final progress before resetting it
+    SaveProgress(book_url_, 0, 0);
+    return Play(book_url_, username_, password_);
 }
 
 bool EbookPlayer::Next() {
@@ -225,6 +240,7 @@ bool EbookPlayer::Seek(int percent) {
     }
     size_t offset = total * static_cast<size_t>(percent) / 100;
     if (!stream_.Open(book_url_, username_, password_, offset, 0)) return false;
+    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
     EdgeSession::GetInstance().Reset();
     paragraph_ = static_cast<size_t>(percent) * (total / 120) / 100;
     ESP_LOGI(TAG, "Seek to %d%% (raw offset %u)", percent, (unsigned)offset);
@@ -425,7 +441,7 @@ void EbookPlayer::PlayTask(void* arg) {
             ESP_LOGI(TAG, "Book finished");
         }
     }
-    self->active_ = false;
+    if (!self->paused_) self->active_ = false;
     self->play_task_ = nullptr;
     vTaskDelete(nullptr);
 }

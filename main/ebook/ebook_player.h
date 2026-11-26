@@ -21,6 +21,7 @@ public:
     bool Pause();
     bool Resume();
     bool Next();
+    bool Replay();
     bool Seek(int percent);
     bool IsPlaying() const { return active_; }
     bool IsPaused() const { return paused_; }
