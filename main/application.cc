@@ -1606,6 +1606,7 @@ void Application::ClearMusicSessionLocked() {
 bool Application::StartMusic(const MusicSource& source) {
     StopNotification(true);
     StopEbook();
+    if (radio_playing_ || radio_switching_) StopRadio();
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         ClearMusicSessionLocked();
@@ -1629,6 +1630,7 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
         return false;
     }
     StopEbook();
+    if (radio_playing_ || radio_switching_) StopRadio();
     if (start_index < 0 || start_index >= static_cast<int>(tracks.size())) {
         start_index = 0;
     }
@@ -1967,7 +1969,8 @@ std::string Application::GetPlaybackTitle() const {
 }
 
 bool Application::IsExternalPlaybackActive() const {
-    return radio_playing_ || GetMusicStatus().active || EbookPlayer::GetInstance().IsPlaying();
+    return radio_playing_ || radio_switching_ || GetMusicStatus().active ||
+           EbookPlayer::GetInstance().IsPlaying();
 }
 
 void Application::SetLowPowerIfIdle() {
@@ -2004,23 +2007,27 @@ void Application::SetBacklightForPlayback(bool playing) {
 }
 
 void Application::StartRadio(const std::string& url, bool wait_for_tts) {
-    if (url.empty()) {
-        return;
-    }
-    if (radio_playing_) {
-        StopRadio();
-    }
+    if (url.empty()) return;
     StopEbook();
     // 与音乐互斥：先停掉音乐会话，避免两路 PCM 争抢 codec
-    if (GetMusicStatus().active) {
-        StopMusicPlayback();
+    if (GetMusicStatus().active) StopMusicPlayback();
+
+    if (radio_playing_ || radio_switching_) {
+        // 切台必须等旧 GMF 任务真正停完再起新的，否则两代 HLS IO 会抢
+        // lifecycle_mutex_，旧流读超时会污染新流。stop 放到一次性任务里，
+        // 完成后回主任务继续起流，避免卡住主事件循环。
+        StopRadio([this, url, wait_for_tts]() { StartRadioAfterStop(url, wait_for_tts); });
+        return;
     }
+    StartRadioAfterStop(url, wait_for_tts);
+}
+
+void Application::StartRadioAfterStop(const std::string& url, bool wait_for_tts) {
     // 清掉上一次可能残留的等待状态
     pending_radio_wait_tts_ = false;
     if (radio_pending_timer_ != nullptr) {
         esp_timer_stop(radio_pending_timer_);
     }
-
     pending_radio_url_ = url;
     if (wait_for_tts) {
         // AI 工具调用：等本轮 tts stop（或兜底超时）再真正起流，避免 TTS 卡顿
@@ -2048,6 +2055,7 @@ void Application::MaybeStartPendingRadio() {
         esp_timer_stop(radio_pending_timer_);
     }
     radio_start_handler_(url);
+    radio_switching_ = false;
     // 电台起流后自动进入空闲：不进入监听态，避免扬声器声音回灌麦克风
     auto state = GetDeviceState();
     if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
@@ -2067,7 +2075,9 @@ void Application::RadioPendingTimeoutCallback(void* arg) {
     });
 }
 
-void Application::StopRadio() {
+void Application::StopRadio(std::function<void()> on_stopped) {
+    bool switching = on_stopped != nullptr;
+    radio_switching_ = switching;
     pending_radio_url_.clear();
     pending_radio_wait_tts_ = false;
     radio_network_paused_ = false;
@@ -2076,13 +2086,20 @@ void Application::StopRadio() {
         esp_timer_stop(radio_pending_timer_);
     }
     radio_playing_ = false;
-    audio_service_.SetExternalPlaybackActive(false);
-    SetBacklightForPlayback(false);
+    if (!switching) {
+        audio_service_.SetExternalPlaybackActive(false);
+        SetBacklightForPlayback(false);
+    }
     ArmRadioWatchdog(false);
     if (radio_stop_handler_) {
         // 电台 Stop() 可能阻塞等待 HTTP 段读取返回，放到一次性任务里执行，
-        // 避免卡住主事件循环或 boot 按键任务。
-        auto* handler = new std::function<void()>(radio_stop_handler_);
+        // 避免卡住主事件循环或 boot 按键任务。切台时完成后再起新流。
+        auto* handler = new std::function<void()>([this, on_stopped]() {
+            radio_stop_handler_();
+            if (on_stopped) {
+                Schedule([cb = on_stopped]() { cb(); });
+            }
+        });
         if (xTaskCreate([](void* arg) {
                 auto* h = static_cast<std::function<void()>*>(arg);
                 (*h)();
@@ -2092,6 +2109,8 @@ void Application::StopRadio() {
             (*handler)();
             delete handler;
         }
+    } else if (on_stopped) {
+        on_stopped();
     }
 }
 

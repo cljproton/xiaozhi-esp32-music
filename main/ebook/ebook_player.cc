@@ -189,6 +189,11 @@ void EbookPlayer::Stop() {
     stopping_ = true;
     active_ = false;
     SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+    // Wait until the playback task actually released the decoder and stopped
+    // pushing PCM, so switching to music/radio cannot mix two sources.
+    for (int i = 0; i < 250 && (synth_task_ != nullptr || play_task_ != nullptr); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 }
 
 bool EbookPlayer::Pause() {

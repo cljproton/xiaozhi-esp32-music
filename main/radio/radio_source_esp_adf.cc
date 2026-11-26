@@ -49,7 +49,24 @@ constexpr size_t kPrebufferHiPsramThreshold = 3 * 1024 * 1024;
 // 按启动时 PSRAM 余量选预滚档位：大块连续分配留足余量，避免 realloc 失败。
 size_t SelectPrebufferSamples() {
     size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    // Long ebook sessions fragment PSRAM; total free size alone overestimates
+    // what can be reserved as one contiguous block.
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    if (largest < kPrebufferHiPsramThreshold) return kPrebufferSamplesLo;
     return psram_free >= kPrebufferHiPsramThreshold ? kPrebufferSamplesHi : kPrebufferSamplesLo;
+}
+
+// HLS ring must be one contiguous PSRAM block; fall back gracefully after a
+// long ebook session has fragmented PSRAM.
+size_t SelectHlsBufferSize() {
+    constexpr size_t kHi = 2 * 1024 * 1024;
+    constexpr size_t kMid = 1 * 1024 * 1024;
+    constexpr size_t kLo = 512 * 1024;
+    constexpr size_t kHeadroom = 320 * 1024;  // preroll + decoder scratch
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    if (largest >= kHi + kHeadroom) return kHi;
+    if (largest >= kMid + kHeadroom) return kMid;
+    return kLo;
 }
 
 // 连续失败上限：避免无效 URL 无限重连、麦克风一直静音。
@@ -298,7 +315,7 @@ public:
         // hls_io only overrides fields > 0, so the rest of its defaults hold.
         // NOTE: keep at 2MB — a 4MB bump exhausted PSRAM and failed the GMF
         // data bus allocation on the 8MB-PSRAM cube boards.
-        hls_cfg.io_cfg.buffer_cfg.buffer_size = 2 * 1024 * 1024;
+        hls_cfg.io_cfg.buffer_cfg.buffer_size = SelectHlsBufferSize();
         hls_cfg.io_cfg.thread.core = 0;  // 网络侧（playlist 解析）与 HTTP IO 同核
         hls_cfg.file_seg_cb = [](esp_hls_file_seg_info_t* info, void* ctx) -> int {
             if (info) {

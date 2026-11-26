@@ -198,7 +198,8 @@ public:
     }
     // wait_for_tts=true: AI 工具调用，等本轮 TTS 播完（或超时）再真正起流
     void StartRadio(const std::string& url, bool wait_for_tts = false);
-    void StopRadio();
+    void StartRadioAfterStop(const std::string& url, bool wait_for_tts);
+    void StopRadio(std::function<void()> on_stopped = nullptr);
     // 电台重连次数耗尽：断网期间保留会话待重连，联网时才真正停台
     void HandleRadioGiveUp();
     void ArmRadioWatchdog(bool arm);
@@ -300,6 +301,7 @@ private:
     std::string pending_radio_url_;
     bool pending_radio_wait_tts_ = false;       // 等本轮 TTS 结束再起流
     bool radio_playing_ = false;
+    bool radio_switching_ = false;  // 切台中：输出与 WiFi 保持性能档
     esp_timer_handle_t radio_watchdog_timer_ = nullptr;
     esp_timer_handle_t radio_pending_timer_ = nullptr;  // TTS 等待兜底超时
     bool radio_watchdog_armed_ = false;
