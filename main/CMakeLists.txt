@@ -59,9 +59,13 @@ set(SOURCES "audio/audio_codec.cc"
             "ebook/ebook_player.cc"
             "tts/audio_ring.cc"
             "tts/edge_session.cc"
+            "network/network_config.cc"
+            "network/proxy_tcp.cc"
+            "network/proxy_ssl.cc"
+            "network/proxy_network.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui" "tts" "ebook")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "handlers" "web_ui" "tts" "ebook" "network")
 
 # Add board common files
 list(APPEND SOURCES

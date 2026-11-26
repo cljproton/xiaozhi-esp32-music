@@ -4,6 +4,8 @@
 #include "application.h"
 #include "system_info.h"
 #include "settings.h"
+#include "network/network_config.h"
+#include "network/proxy_network.h"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
@@ -86,6 +88,7 @@ void WifiBoard::StartNetwork() {
                 OnNetworkEvent(NetworkEvent::Connecting, data);
                 break;
             case WifiEvent::Connected:
+                NetworkSettings::ApplyStaticIp();
                 OnNetworkEvent(NetworkEvent::Connected, data);
                 break;
             case WifiEvent::Disconnected:
@@ -258,7 +261,7 @@ bool WifiBoard::IsInWifiConfigMode() const {
 
 NetworkInterface* WifiBoard::GetNetwork() {
     static EspNetwork network;
-    return &network;
+    return &ProxyNetwork::Instance(&network);
 }
 
 const char* WifiBoard::GetNetworkStateIcon() {

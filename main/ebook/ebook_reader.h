@@ -18,5 +18,6 @@ EbookBook EbookLoad(const std::string& url, const std::string& username = "",
 std::vector<std::string> EbookMergeParagraphs(const std::string& text, size_t target_chars = 300);
 
 // Encoding helpers (shared with the streaming reader).
+std::string EbookDecodeName(const std::string& in);
 bool IsValidUtf8(const std::string& s);
 std::string GbkToUtf8(const std::string& in);

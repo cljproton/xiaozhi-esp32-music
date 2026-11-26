@@ -159,7 +159,7 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
         ESP_LOGE(TAG, "Open stream failed: %s", url.c_str());
         return false;
     }
-    book_.name = url.substr(url.find_last_of('/') + 1);
+    book_.name = EbookDecodeName(url.substr(url.find_last_of('/') + 1));
     book_url_ = url;
     username_ = username;
     password_ = password;

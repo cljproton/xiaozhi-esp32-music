@@ -7,9 +7,9 @@
 namespace ebook_api {
 void RegisterHandlers(HandlerRegistry& registry);
 
-// List TXT/EPUB books in a WebDAV directory. Returns a cJSON array of
-// {"url","name"} objects (caller owns the returned pointer), or nullptr on error
-// with `error` filled.
+// List TXT books in a WebDAV directory. offset/limit (0 = all) page the result;
+// `*total` receives the number of matching books. Caller owns the returned array.
 cJSON* ListSourceBooks(const std::string& dir_url, const std::string& username,
-                       const std::string& password, std::string& error);
+                       const std::string& password, int offset, int limit,
+                       int& total, std::string& error);
 }  // namespace ebook_api

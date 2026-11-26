@@ -159,8 +159,12 @@ esp_err_t MusicTracksHandler(httpd_req_t* req) {
     if (page < 1) {
         page = 1;
     }
+    constexpr int kPageSize = 20;
     bool truncated = false;
-    auto tracks = McpServer::GetInstance().ListMusicTracks(source_json, &truncated);
+    int total = 0;
+    int first = (page - 1) * kPageSize;
+    auto tracks = McpServer::GetInstance().ListMusicTracks(source_json, &truncated,
+                                                           first, kPageSize, &total);
     if (!tracks) {
         return SendJson(req, [&]() {
             CJsonUniquePtr root(cJSON_CreateObject());
@@ -170,16 +174,25 @@ esp_err_t MusicTracksHandler(httpd_req_t* req) {
         }());
     }
 
-    int total = static_cast<int>(tracks->size());
-    int pages = (total + kTracksPageSize - 1) / kTracksPageSize;
+    int pages = (total + kPageSize - 1) / kPageSize;
     if (pages < 1) {
         pages = 1;
     }
     if (page > pages) {
-        page = pages;
+        page = 1;
+        first = 0;
+        tracks = McpServer::GetInstance().ListMusicTracks(source_json, &truncated,
+                                                          first, kPageSize, &total);
+        if (!tracks) {
+            return SendJson(req, [&]() {
+                CJsonUniquePtr root(cJSON_CreateObject());
+                cJSON_AddStringToObject(root.get(), "status", "error");
+                cJSON_AddStringToObject(root.get(), "error", tracks.error().c_str());
+                return root.release();
+            }());
+        }
     }
-    int first = (page - 1) * kTracksPageSize;
-    int last = first + kTracksPageSize;
+    int last = first + kPageSize;
     if (last > total) {
         last = total;
     }
@@ -189,12 +202,12 @@ esp_err_t MusicTracksHandler(httpd_req_t* req) {
     cJSON_AddNumberToObject(root.get(), "total", total);
     cJSON_AddNumberToObject(root.get(), "page", page);
     cJSON_AddNumberToObject(root.get(), "pages", pages);
-    cJSON_AddNumberToObject(root.get(), "page_size", kTracksPageSize);
-    cJSON_AddBoolToObject(root.get(), "truncated", truncated);
+    cJSON_AddNumberToObject(root.get(), "page_size", kPageSize);
+    cJSON_AddBoolToObject(root.get(), "truncated", truncated && page * kPageSize >= total);
     cJSON* list = cJSON_AddArrayToObject(root.get(), "tracks");
-    for (int i = first; i < last; ++i) {
+    for (int i = 0; i < static_cast<int>(tracks->size()); ++i) {
         cJSON* track = cJSON_CreateObject();
-        cJSON_AddNumberToObject(track, "index", i);
+        cJSON_AddNumberToObject(track, "index", first + i);
         cJSON_AddStringToObject(track, "title", (*tracks)[i].title.c_str());
         cJSON_AddItemToArray(list, track);
     }

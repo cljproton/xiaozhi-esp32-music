@@ -531,7 +531,8 @@ void McpServer::AddCommonTools() {
                 if (pass.empty()) pass = src.GetString("source_pass", "");
                 if (url.empty()) return std::string("未配置书源，请先在网页端 /book 保存或在参数中提供 url");
                 std::string error;
-                cJSON* books = ebook_api::ListSourceBooks(url, user, pass, error);
+                int total = 0;
+                cJSON* books = ebook_api::ListSourceBooks(url, user, pass, 0, 0, total, error);
                 if (books == nullptr) return std::string("列出书目失败: ") + error;
                 cJSON* res = cJSON_CreateObject();
                 cJSON_AddStringToObject(res, "status", "ok");
@@ -557,7 +558,9 @@ void McpServer::AddCommonTools() {
                     std::string source_url = src.GetString("source_url", "");
                     if (source_url.empty()) return std::string("未配置书源，请先在网页端 /book 保存");
                     std::string error;
-                    cJSON* books = ebook_api::ListSourceBooks(source_url, user, pass, error);
+                    int total = 0;
+                    cJSON* books = ebook_api::ListSourceBooks(source_url, user, pass, 0, 0,
+                                                              total, error);
                     if (books == nullptr) return std::string("列出书目失败: ") + error;
                     std::string lower_name = name;
                     std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
@@ -967,9 +970,36 @@ std::string NoMusicSourceError() {
     return "未配置音乐音源。请在浏览器打开设备网页端，在「管理音源」中添加 WebDAV 音源后再试。";
 }
 
-std::vector<std::string> ExtractXmlHrefs(const std::string& xml) {
+bool HasExtension(const std::string& href, const char* const* exts, size_t count) {
+    std::string lower = href;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    for (size_t i = 0; i < count; ++i) {
+        size_t len = strlen(exts[i]);
+        if (lower.size() > len && lower.compare(lower.size() - len, len, exts[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsAudioHref(const std::string& href) {
+    // aiff 无对应解码器（会被误当 MP3 解），故不列入
+    static const char* kExts[] = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus"};
+    return HasExtension(href, kExts, std::size(kExts));
+}
+
+bool IsTxtHref(const std::string& href) {
+    static const char* kExts[] = {".txt"};
+    return HasExtension(href, kExts, std::size(kExts));
+}
+
+std::vector<std::string> ExtractXmlHrefs(
+    const std::string& xml, int offset = 0, int limit = 0, int* total = nullptr,
+    const std::function<bool(const std::string&)>& include = {}) {
     std::vector<std::string> hrefs;
     size_t pos = 0;
+    int matched = 0;
     while (true) {
         // OpenList (and some servers) prefix element names with a namespace
         // prefix, e.g. "<D:response><D:href>/path</D:href>...", so accept both.
@@ -1016,14 +1046,23 @@ std::vector<std::string> ExtractXmlHrefs(const std::string& xml) {
             }
             amp_pos = href.find("&", amp_pos + rep.size());
         }
-        hrefs.push_back(href);
+        if (include && !include(href)) {
+            pos = end + end_len;
+            continue;
+        }
+        if (total != nullptr) ++*total;
+        if (limit <= 0 || (matched >= offset && matched < offset + limit)) {
+            hrefs.push_back(href);
+        }
+        ++matched;
         pos = end + end_len;
     }
     return hrefs;
 }
-}  // namespace
 
-std::expected<std::string, std::string> McpServer::ListWebdav(const std::string& source) {
+std::expected<std::string, std::string> WebdavList(
+    const std::string& source, int offset, int limit, int* total,
+    const std::function<bool(const std::string&)>& include) {
     CJsonUniquePtr source_json(cJSON_Parse(source.c_str()));
     if (source_json == nullptr || !cJSON_IsObject(source_json.get())) {
         return std::unexpected("Invalid source: expected a JSON object");
@@ -1116,7 +1155,7 @@ std::expected<std::string, std::string> McpServer::ListWebdav(const std::string&
         return std::unexpected(last_error);
     }
 
-    std::vector<std::string> hrefs = ExtractXmlHrefs(body);
+    std::vector<std::string> hrefs = ExtractXmlHrefs(body, offset, limit, total, include);
     CJsonUniquePtr entries(cJSON_CreateArray());
     if (entries != nullptr) {
         for (const auto& href : hrefs) {
@@ -1126,6 +1165,19 @@ std::expected<std::string, std::string> McpServer::ListWebdav(const std::string&
     CJsonStringUniquePtr printed(cJSON_PrintUnformatted(entries.get()));
     std::string json = printed ? std::string(printed.get()) : std::string("[]");
     return json;
+}
+
+}  // namespace
+
+std::expected<std::string, std::string> McpServer::ListWebdav(const std::string& source) {
+    return WebdavList(source, 0, 0, nullptr, {});
+}
+
+std::expected<std::string, std::string> McpServer::ListWebdavPage(
+    const std::string& source, int offset, int limit, int* total, bool audio_only) {
+    return WebdavList(source, offset, limit, total,
+                      audio_only ? std::function<bool(const std::string&)>(IsAudioHref)
+                                 : std::function<bool(const std::string&)>(IsTxtHref));
 }
 
 ToolResult McpServer::PlayMusic(const std::string& source) {
@@ -1191,11 +1243,17 @@ ToolResult McpServer::PlayMusic(const std::string& source) {
 }
 
 __attribute__((noinline)) std::expected<std::vector<Application::MusicSource>, std::string>
-McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
-    auto listing = ListWebdav(source);
+McpServer::ListMusicTracks(const std::string& source, bool* truncated, int offset,
+                           int limit, int* total) {
+    int matched = 0;
+    auto listing = (limit > 0)
+                       ? ListWebdavPage(source, offset, limit, &matched, true)
+                       : ListWebdav(source);
     if (!listing) {
         return std::unexpected(listing.error());
     }
+    constexpr size_t kMaxMusicTracks = 500;
+    if (total != nullptr) *total = std::min(matched, static_cast<int>(kMaxMusicTracks));
     CJsonUniquePtr source_json(cJSON_Parse(source.c_str()));
     std::string origin;
     std::string username;
@@ -1215,7 +1273,6 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
         }
     }
 
-    constexpr size_t kMaxMusicTracks = 500;
     std::vector<Application::MusicSource> tracks;
     CJsonUniquePtr entries(cJSON_Parse(listing->c_str()));
     if (entries != nullptr && cJSON_IsArray(entries.get())) {
@@ -1226,25 +1283,6 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
                 continue;
             }
             std::string href = item->valuestring;
-            std::string lower = href;
-            std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-            // aiff 无对应解码器（会被误当 MP3 解），故不列入
-            static const char* kAudioExtensions[] = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus"};
-            bool is_audio = false;
-            for (const auto& ext : kAudioExtensions) {
-                std::string ext_lower = ext;
-                std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-                if (lower.size() > ext_lower.size() &&
-                    lower.compare(lower.size() - ext_lower.size(), ext_lower.size(), ext_lower) == 0) {
-                    is_audio = true;
-                    break;
-                }
-            }
-            if (!is_audio) {
-                continue;
-            }
             if (tracks.size() >= kMaxMusicTracks) {
                 if (truncated != nullptr) {
                     *truncated = true;
@@ -1260,6 +1298,7 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated) {
             tracks.push_back(std::move(track));
         }
     }
+    if (limit <= 0 && total != nullptr) *total = static_cast<int>(tracks.size());
     return tracks;
 }
 

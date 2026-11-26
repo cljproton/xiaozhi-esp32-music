@@ -479,11 +479,18 @@ public:
     ToolResult PlayMusic(const std::string& source);
     // WebDAV directory listing (PROPFIND) shared by the music sources flow.
     std::expected<std::string, std::string> ListWebdav(const std::string& source);
+    // Paged listing: only hrefs in [offset, offset+limit) are returned; `*total`
+    // (if given) counts every matching href. audio_only=true filters by audio
+    // extensions, otherwise only .txt files count.
+    std::expected<std::string, std::string> ListWebdavPage(
+        const std::string& source, int offset, int limit, int* total = nullptr,
+        bool audio_only = false);
     // base_url 只保留 scheme://host[:port]，供音源迁移复用
     static std::string UrlOrigin(const std::string& url);
     // WebDAV audio tracks in a source directory; shared by the play-all and count tools.
     std::expected<std::vector<Application::MusicSource>, std::string> ListMusicTracks(
-        const std::string& source, bool* truncated = nullptr);
+        const std::string& source, bool* truncated = nullptr, int offset = 0, int limit = 0,
+        int* total = nullptr);
     // Play every audio track of a WebDAV source, in order or random order.
     ToolResult PlayMusicAll(const std::string& source, bool random);
     // Count the audio tracks of a WebDAV source.

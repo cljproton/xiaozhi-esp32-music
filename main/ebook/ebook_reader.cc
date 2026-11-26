@@ -53,6 +53,32 @@ std::string HttpGet(const std::string& url, const std::string& username,
 
 }  // namespace
 
+// WebDAV hrefs are percent-encoded; decode once, plus a second pass for
+// double-encoded names (e.g. %255B -> %5B) seen on some servers.
+std::string EbookDecodeName(const std::string& in) {
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int hi = hex(in[i + 1]), lo = hex(in[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    if (out.find('%') != std::string::npos) return EbookDecodeName(out);
+    return out;
+}
+
 // Check whether a byte buffer is valid UTF-8.
 bool IsValidUtf8(const std::string& s) {
     size_t i = 0;

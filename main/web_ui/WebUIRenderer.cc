@@ -139,8 +139,9 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
 </div>
 <script>
 const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',config:'设备配置',dconfig:'修改密码、睡眠模式、天气'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',config:'Settings',dconfig:'Password, sleep mode, weather'}};
-const lang=(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en';const T=I18N[lang];
-for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-config','config'],['d-config','dconfig']]){const el=document.getElementById(id);if(el)el.textContent=T[key];}
+let lang=localStorage.getItem('lang')==='en'?'en':(localStorage.getItem('lang')==='zh'?'zh':((navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en'));
+function applyHomeLang(){document.documentElement.lang=lang;const T=I18N[lang];for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-config','config'],['d-config','dconfig']]){const el=document.getElementById(id);if(el)el.textContent=I18N[lang][key]}}
+applyHomeLang();window.addEventListener('storage',e=>{if(e.key==='lang'){lang=e.newValue==='en'?'en':'zh';applyHomeLang()}});
 const $=id=>document.getElementById(id);
 fetch('/api/auth').then(r=>r.json()).then(d=>{if(!d.authenticated)location.replace('/login?next=/');}).catch(()=>location.replace('/login?next=/'));
 </script>
@@ -272,11 +273,10 @@ const I18N = {
 };
 const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
 
-function setLang() {
-  lang = lang === 'zh' ? 'en' : 'zh';
+function applyLang() {
+  lang = localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'zh';
   document.documentElement.lang = lang;
-  localStorage.setItem(LANG_KEY, lang);
-  $('btn-lang').textContent = lang === 'zh' ? 'EN' : '中';
+  $('btn-lang').textContent = lang === 'zh' ? '中' : 'EN';
   document.querySelectorAll('[data-i18n]').forEach((el) => {
     const v = (I18N[lang] || I18N.en)[el.getAttribute('data-i18n')];
     if (v) el.textContent = v;
@@ -285,7 +285,9 @@ function setLang() {
   renderStatus(playing);
 }
 
-$('btn-lang').addEventListener('click', () => setLang());
+$('btn-lang').addEventListener('click', () => { location.href = '/config'; });
+window.addEventListener('storage', (e) => { if (e.key === LANG_KEY) applyLang(); });
+applyLang();
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

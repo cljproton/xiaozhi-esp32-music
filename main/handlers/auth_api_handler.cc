@@ -29,20 +29,30 @@ p{color:var(--dim);font-size:13px;line-height:1.6;margin-bottom:16px}
 input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:10px;font-size:15px;margin-bottom:12px}
 button{width:100%;background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px;font-size:15px;cursor:pointer}
 #msg{color:#f88;font-size:13px;min-height:18px;margin-top:10px}
-.hint{background:rgba(79,140,255,.1);border:1px solid rgba(79,140,255,.3);border-radius:8px;padding:8px 10px;margin-bottom:14px;font-size:13px;color:#9dc0ff}
+#hint{background:rgba(79,140,255,.1);border:1px solid rgba(79,140,255,.3);border-radius:8px;padding:8px 10px;margin-bottom:14px;font-size:13px;color:#9dc0ff}
+.lang-btn{background:transparent;border:1px solid var(--line);color:var(--dim);border-radius:999px;padding:4px 10px;margin-bottom:14px;font-size:13px;cursor:pointer;width:auto}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>小智设备管理</h1>
-  <p>请输入网页端登录密码。</p>
-  <div class="hint" id="default-hint" style="display:none">默认密码：xiaozhi</div>
+  <h1 id="t-title">小智设备管理</h1>
+  <p id="t-hint-text">请输入网页端登录密码。</p>
+  <div class="hint" id="default-hint" style="display:none"></div>
   <input id="password" type="password" placeholder="密码" autocomplete="current-password">
   <button id="submit" type="button">登录</button>
+  <button id="lang" class="lang-btn" type="button">中</button>
   <div id="msg"></div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
+const LANG_KEY='lang';
+let lang=localStorage.getItem(LANG_KEY)==='en'?'en':'zh';
+const I18N={zh:{title:'小智设备管理',hint:'请输入网页端登录密码。',defaultHint:'默认密码：xiaozhi',password:'密码',login:'登录',failed:'登录失败',network:'网络错误'},en:{title:'XiaoZhi Device',hint:'Enter the web interface password.',defaultHint:'Default password: xiaozhi',password:'Password',login:'Sign in',failed:'Login failed',network:'Network error'}};
+const T=k=>I18N[lang][k];
+function applyLang(){document.documentElement.lang=lang;document.title=T('title');$('t-title').textContent=T('title');$('t-hint-text').textContent=T('hint');$('default-hint').textContent=T('defaultHint');$('password').placeholder=T('password');$('submit').textContent=T('login');$('lang').textContent=lang==='zh'?'中':'EN'}
+$('lang').addEventListener('click',()=>{lang=lang==='zh'?'en':'zh';localStorage.setItem(LANG_KEY,lang);applyLang()});
+window.addEventListener('storage',e=>{if(e.key===LANG_KEY){lang=e.newValue==='en'?'en':'zh';applyLang()}});
+applyLang();
 function nextPath(){
   const n = new URLSearchParams(location.search).get('next') || '/';
   return n.startsWith('/') && !n.startsWith('//') ? n : '/';
@@ -57,8 +67,8 @@ async function doLogin(){
       body:JSON.stringify({action:'login',password:$('password').value})});
     const d = await r.json().catch(()=>({}));
     if(r.ok && d.status==='ok'){ location.replace(nextPath()); return; }
-    $('msg').textContent = d.error || '登录失败';
-  }catch(e){ $('msg').textContent='网络错误'; }
+    $('msg').textContent = d.error || T('failed');
+  }catch(e){ $('msg').textContent=T('network'); }
 }
 $('submit').addEventListener('click',doLogin);
 $('password').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
