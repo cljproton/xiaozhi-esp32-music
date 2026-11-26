@@ -29,6 +29,7 @@ public:
     size_t TextPosition() const { return pos_; }
     size_t TotalBytes() const { return total_bytes_; }
     bool EndOfFile() const { return eof_; }
+    bool HasError() const { return error_; }
 
 private:
     bool Refill();
@@ -43,6 +44,7 @@ private:
     size_t total_bytes_ = 0;
     size_t pending_skip_ = 0;  // text_skip applied to the first chunk
     int failures_ = 0;         // consecutive failed Range requests
+    bool error_ = false;       // gave up after repeated HTTP failures
     bool eof_ = false;
     bool need_convert_ = false;  // source is GBK
     std::string carry_;          // partial multibyte sequence at chunk edge

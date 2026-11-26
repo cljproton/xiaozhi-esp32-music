@@ -193,6 +193,10 @@ public:
     bool IsExternalPlaybackActive() const;
     void SetLowPowerIfIdle();
     void SetRadioStopHandler(std::function<void()> handler) { radio_stop_handler_ = std::move(handler); }
+    // Switching sources is asynchronous (radio stop may block on HTTP); a
+    // generation number lets stale continuations be dropped safely.
+    uint32_t BeginSourceSwitch() { return ++switch_seq_; }
+    bool IsCurrentSourceSwitch(uint32_t seq) const { return seq == switch_seq_; }
     void SetRadioStartHandler(std::function<void(const std::string&)> handler) {
         radio_start_handler_ = std::move(handler);
     }
@@ -212,6 +216,8 @@ public:
     // E-book (TTS) playback
     bool PlayEbook(const std::string& url, const std::string& username = "",
                    const std::string& password = "");
+    bool StartEbookNow(const std::string& url, const std::string& username,
+                       const std::string& password);
     void StopEbook();
     bool EbookPause();
     bool EbookResume();
@@ -302,6 +308,7 @@ private:
     bool pending_radio_wait_tts_ = false;       // 等本轮 TTS 结束再起流
     bool radio_playing_ = false;
     bool radio_switching_ = false;  // 切台中：输出与 WiFi 保持性能档
+    uint32_t switch_seq_ = 0;
     esp_timer_handle_t radio_watchdog_timer_ = nullptr;
     esp_timer_handle_t radio_pending_timer_ = nullptr;  // TTS 等待兜底超时
     bool radio_watchdog_armed_ = false;

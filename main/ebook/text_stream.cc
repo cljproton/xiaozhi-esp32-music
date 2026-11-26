@@ -62,6 +62,7 @@ bool TextStream::Open(const std::string& url, const std::string& username,
     buf_.clear();
     pending_skip_ = text_skip;
     failures_ = 0;
+    error_ = false;
     return true;  // actual fetch happens on first Refill
 }
 
@@ -75,6 +76,7 @@ void TextStream::Close() {
     total_bytes_ = 0;
     pending_skip_ = 0;
     failures_ = 0;
+    error_ = false;
     eof_ = true;
 }
 
@@ -146,7 +148,10 @@ bool TextStream::Refill() {
     if (!got) {
         // A failed Range request is usually transient (server hiccup). Keep
         // eof_ false so the caller retries instead of declaring the book done.
-        if (++failures_ >= 10) eof_ = true;
+        if (++failures_ >= 10) {
+            eof_ = true;
+            error_ = true;
+        }
         return false;
     }
     failures_ = 0;

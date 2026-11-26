@@ -63,6 +63,7 @@ esp_err_t HandleStatus(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "book", st.book_name.c_str());
     cJSON_AddNumberToObject(root, "paragraph", st.paragraph);
     cJSON_AddNumberToObject(root, "total", st.total);
+    cJSON_AddBoolToObject(root, "error", st.error);
     return SendJson(req, root);
 }
 

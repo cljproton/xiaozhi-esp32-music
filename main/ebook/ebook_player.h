@@ -31,6 +31,7 @@ public:
         std::string book_name;
         size_t paragraph = 0;
         size_t total = 0;
+        bool error = false;
     };
     Status GetStatus() const;
 
@@ -47,6 +48,7 @@ private:
     std::atomic<bool> stopping_{false};
     std::atomic<bool> skip_requested_{false};
     std::atomic<bool> feed_done_{false};
+    bool finish_error_ = false;  // stream ended because of repeated HTTP errors
     EbookBook book_;
     TextStream stream_;
     std::string book_url_;

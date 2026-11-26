@@ -1604,9 +1604,18 @@ void Application::ClearMusicSessionLocked() {
 }
 
 bool Application::StartMusic(const MusicSource& source) {
+    if (radio_playing_ || radio_switching_) {
+        uint32_t seq = BeginSourceSwitch();
+        auto copy = source;
+        StopRadio([this, copy, seq]() {
+            if (IsCurrentSourceSwitch(seq)) StartMusic(copy);
+        });
+        return true;
+    }
+    uint32_t seq = BeginSourceSwitch();
+    (void)seq;
     StopNotification(true);
     StopEbook();
-    if (radio_playing_ || radio_switching_) StopRadio();
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         ClearMusicSessionLocked();
@@ -1629,8 +1638,19 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
     if (tracks.empty()) {
         return false;
     }
+    if (radio_playing_ || radio_switching_) {
+        uint32_t seq = BeginSourceSwitch();
+        auto copy = tracks;
+        StopRadio([this, copy, seq, source_index, mode, start_index, truncated]() {
+            if (IsCurrentSourceSwitch(seq)) {
+                PlayMusicPlaylist(copy, source_index, mode, start_index, truncated);
+            }
+        });
+        return true;
+    }
+    uint32_t seq = BeginSourceSwitch();
+    (void)seq;
     StopEbook();
-    if (radio_playing_ || radio_switching_) StopRadio();
     if (start_index < 0 || start_index >= static_cast<int>(tracks.size())) {
         start_index = 0;
     }
@@ -1935,9 +1955,20 @@ void Application::StopMusicPlayback() {
 
 bool Application::PlayEbook(const std::string& url, const std::string& username,
                             const std::string& password) {
+    uint32_t seq = BeginSourceSwitch();
     // 输出只有一个：先停掉音乐/电台，避免两路 PCM 争抢 codec
     if (GetMusicStatus().active) StopMusicPlayback();
-    if (radio_playing_) StopRadio();
+    if (radio_playing_ || radio_switching_) {
+        StopRadio([this, url, username, password, seq]() {
+            if (IsCurrentSourceSwitch(seq)) StartEbookNow(url, username, password);
+        });
+        return true;
+    }
+    return StartEbookNow(url, username, password);
+}
+
+bool Application::StartEbookNow(const std::string& url, const std::string& username,
+                                const std::string& password) {
     return EbookPlayer::GetInstance().Play(url, username, password);
 }
 void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
@@ -2016,7 +2047,10 @@ void Application::StartRadio(const std::string& url, bool wait_for_tts) {
         // 切台必须等旧 GMF 任务真正停完再起新的，否则两代 HLS IO 会抢
         // lifecycle_mutex_，旧流读超时会污染新流。stop 放到一次性任务里，
         // 完成后回主任务继续起流，避免卡住主事件循环。
-        StopRadio([this, url, wait_for_tts]() { StartRadioAfterStop(url, wait_for_tts); });
+        uint32_t seq = BeginSourceSwitch();
+        StopRadio([this, url, wait_for_tts, seq]() {
+            if (IsCurrentSourceSwitch(seq)) StartRadioAfterStop(url, wait_for_tts);
+        });
         return;
     }
     StartRadioAfterStop(url, wait_for_tts);

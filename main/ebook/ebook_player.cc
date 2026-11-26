@@ -175,6 +175,7 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
     stopping_ = false;
     skip_requested_ = false;
     feed_done_ = false;
+    finish_error_ = false;
     // Decode/playback runs on its own task so a reconnect or a slow HTTP Range
     // fetch can never starve the I2S output.
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
@@ -232,6 +233,7 @@ bool EbookPlayer::Seek(int percent) {
     stopping_ = false;
     skip_requested_ = false;
     feed_done_ = false;
+    finish_error_ = false;
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
     xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 12288, this, 2, &synth_task_, 0);
     return true;
@@ -244,6 +246,7 @@ EbookPlayer::Status EbookPlayer::GetStatus() const {
     s.book_name = book_.name;
     s.paragraph = paragraph_;
     s.total = stream_.TotalBytes() > 0 ? stream_.TotalBytes() / 120 : 0;
+    s.error = finish_error_;
     return s;
 }
 
@@ -366,6 +369,7 @@ void EbookPlayer::SynthTask(void* arg) {
             std::string sentence;
             if (!self->stream_.NextSentence(sentence)) {
                 eof = self->stream_.EndOfFile();
+                self->finish_error_ = self->stream_.HasError();
                 if (!eof) vTaskDelay(pdMS_TO_TICKS(500));  // transient HTTP error
                 break;
             }
@@ -414,8 +418,12 @@ void EbookPlayer::PlayTask(void* arg) {
     }
     AudioDecoderRegistry::GetInstance().Release();
     if (self->feed_done_ && !self->stopping_) {
-        SaveProgress(self->book_url_, 0, 0);  // finished: start over next time
-        ESP_LOGI(TAG, "Book finished");
+        if (self->finish_error_) {
+            ESP_LOGW(TAG, "Book source error, progress kept");
+        } else {
+            SaveProgress(self->book_url_, 0, 0);  // finished: start over next time
+            ESP_LOGI(TAG, "Book finished");
+        }
     }
     self->active_ = false;
     self->play_task_ = nullptr;

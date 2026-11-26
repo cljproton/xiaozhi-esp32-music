@@ -19,4 +19,5 @@ private:
     AudioDecoderRegistry() = default;
     std::mutex mutex_;
     int count_ = 0;
+    bool registered_ = false;
 };
