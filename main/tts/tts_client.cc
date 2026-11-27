@@ -259,8 +259,11 @@ bool HttpSynthesize(const TtsRequest& req) {
         req.on_done(false, "HTTP TTS URL not configured");
         return false;
     }
+    char speed[16];
+    snprintf(speed, sizeof(speed), "%.2f", 1.0f + req.speed / 100.0f);
     std::string body = std::string("{\"model\":\"tts-1\",\"input\":\"") + XmlEscape(req.text) +
-                       "\",\"voice\":\"" + req.voice + "\",\"response_format\":\"mp3\"}";
+                       "\",\"voice\":\"" + req.voice + "\",\"response_format\":\"mp3\","
+                       "\"speed\":" + speed + "}";
 
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();
@@ -284,16 +287,24 @@ bool HttpSynthesize(const TtsRequest& req) {
     bool ok = false;
     std::string error;
     if (err == ESP_OK) {
-        int status = esp_http_client_get_status_code(client);
-        if (status == 200) {
-            char buf[1024];
-            int read;
-            while ((read = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
-                if (req.on_audio) req.on_audio(reinterpret_cast<const uint8_t*>(buf), read);
-            }
-            ok = true;
+        // open() 只发请求头，POST body 必须显式 write（ESP-IDF 已知行为）。
+        int written = esp_http_client_write(client, body.data(), body.size());
+        if (written != static_cast<int>(body.size())) {
+            error = "write body failed: " + std::to_string(written);
         } else {
-            error = "HTTP status " + std::to_string(status);
+            int header_len = esp_http_client_fetch_headers(client);
+            if (header_len < 0) {
+                error = "fetch headers failed: " + std::to_string(header_len);
+            } else if (int status = esp_http_client_get_status_code(client); status == 200) {
+                char buf[1024];
+                int read;
+                while ((read = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
+                    if (req.on_audio) req.on_audio(reinterpret_cast<const uint8_t*>(buf), read);
+                }
+                ok = true;
+            } else {
+                error = "HTTP status " + std::to_string(status);
+            }
         }
     } else {
         error = esp_err_to_name(err);

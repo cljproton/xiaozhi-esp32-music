@@ -1971,7 +1971,15 @@ bool Application::StartEbookNow(const std::string& url, const std::string& usern
                                 const std::string& password) {
     return EbookPlayer::GetInstance().Play(url, username, password);
 }
-void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
+void Application::StopEbook() {
+    bool was_playing = EbookPlayer::GetInstance().IsPlaying();
+    EbookPlayer::GetInstance().Stop();
+    if (was_playing) {
+        audio_service_.SetExternalPlaybackActive(false);
+        audio_service_.EnableVoiceProcessing(true);
+        SetLowPowerIfIdle();
+    }
+}
 bool Application::IsEbookPlaying() const { return EbookPlayer::GetInstance().IsPlaying(); }
 bool Application::EbookPause() { return EbookPlayer::GetInstance().Pause(); }
 bool Application::EbookResume() { return EbookPlayer::GetInstance().Resume(); }

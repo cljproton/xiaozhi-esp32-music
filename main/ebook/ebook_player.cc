@@ -104,36 +104,50 @@ struct Mp3Pipeline {
         out = nullptr;
     }
 
+    // 把一段 MP3 字节流解成 PCM；Edge 的 ring 读取和 HTTP 的回调都走这里。
+    void Consume(uint8_t* mp3, size_t n) {
+        size_t off = 0;
+        while (off < n) {
+            esp_audio_simple_dec_raw_t raw = {};
+            raw.buffer = mp3 + off;
+            raw.len = static_cast<uint32_t>(n - off);
+            esp_audio_simple_dec_out_t pcm_out = {};
+            pcm_out.buffer = out;
+            pcm_out.len = kOutSize;
+            esp_audio_simple_dec_process(dec, &raw, &pcm_out);
+            if (raw.consumed == 0 && pcm_out.decoded_size == 0) break;  // stuck
+            off += raw.consumed;
+            if (pcm_out.decoded_size == 0) continue;
+            if (!have_info) {
+                esp_audio_simple_dec_info_t info;
+                if (esp_audio_simple_dec_get_info(dec, &info) == ESP_AUDIO_ERR_OK) {
+                    sample_rate = info.sample_rate;
+                    channels = info.channel;
+                    have_info = true;
+                }
+            }
+            auto* pcm = reinterpret_cast<int16_t*>(out);
+            pcm_bytes += pcm_out.decoded_size;
+            batch.insert(batch.end(), pcm, pcm + pcm_out.decoded_size / sizeof(int16_t));
+            if (batch.size() >= kBatchSamples) Flush();
+        }
+    }
+
     void Drain(EdgeSession& session) {
         uint8_t mp3[512];
         while (!(stopping != nullptr && stopping->load()) && session.AudioAvailable() > 0) {
             size_t n = session.ReadAudio(mp3, sizeof(mp3));
             if (n == 0) break;
-            size_t off = 0;
-            while (off < n) {
-                esp_audio_simple_dec_raw_t raw = {};
-                raw.buffer = mp3 + off;
-                raw.len = static_cast<uint32_t>(n - off);
-                esp_audio_simple_dec_out_t pcm_out = {};
-                pcm_out.buffer = out;
-                pcm_out.len = kOutSize;
-                esp_audio_simple_dec_process(dec, &raw, &pcm_out);
-                if (raw.consumed == 0 && pcm_out.decoded_size == 0) break;  // stuck
-                off += raw.consumed;
-                if (pcm_out.decoded_size == 0) continue;
-                if (!have_info) {
-                    esp_audio_simple_dec_info_t info;
-                    if (esp_audio_simple_dec_get_info(dec, &info) == ESP_AUDIO_ERR_OK) {
-                        sample_rate = info.sample_rate;
-                        channels = info.channel;
-                        have_info = true;
-                    }
-                }
-                auto* pcm = reinterpret_cast<int16_t*>(out);
-                pcm_bytes += pcm_out.decoded_size;
-                batch.insert(batch.end(), pcm, pcm + pcm_out.decoded_size / sizeof(int16_t));
-                if (batch.size() >= kBatchSamples) Flush();
-            }
+            Consume(mp3, n);
+        }
+    }
+
+    void Drain(AudioRing& ring) {
+        uint8_t mp3[512];
+        while (!(stopping != nullptr && stopping->load()) && ring.Available() > 0) {
+            size_t n = ring.Read(mp3, sizeof(mp3));
+            if (n == 0) break;
+            Consume(mp3, n);
         }
     }
 };
@@ -146,6 +160,13 @@ EbookPlayer& EbookPlayer::GetInstance() {
 }
 
 EbookPlayer::EbookPlayer() = default;
+
+void EbookPlayer::KeepOutputAlive() {
+    auto& app = Application::GetInstance();
+    app.GetAudioService().SetExternalPlaybackActive(true);
+    app.GetAudioService().EnableVoiceProcessing(false);
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+}
 
 bool EbookPlayer::Play(const std::string& url, const std::string& username,
                        const std::string& password) {
@@ -176,6 +197,8 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
     skip_requested_ = false;
     feed_done_ = false;
     finish_error_ = false;
+    http_ring_.Reset();
+    KeepOutputAlive();
     // Decode/playback runs on its own task so a reconnect or a slow HTTP Range
     // fetch can never starve the I2S output.
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
@@ -250,6 +273,8 @@ bool EbookPlayer::Seek(int percent) {
     skip_requested_ = false;
     feed_done_ = false;
     finish_error_ = false;
+    http_ring_.Reset();
+    KeepOutputAlive();
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
     xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 12288, this, 2, &synth_task_, 0);
     return true;
@@ -268,38 +293,50 @@ EbookPlayer::Status EbookPlayer::GetStatus() const {
 
 bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, int speed) {
     if (text.empty()) return false;
-    auto& session = EdgeSession::GetTestInstance();
     if (!AudioDecoderRegistry::GetInstance().Acquire()) {
         ESP_LOGE(TAG, "cannot acquire audio decoders for test");
         return false;
     }
-    if (!session.Connect(voice.empty() ? TtsGetVoice() : voice, speed)) {
-        ESP_LOGE(TAG, "test connect failed");
-        AudioDecoderRegistry::GetInstance().Release();
-        return false;
-    }
-    if (!session.Speak(text)) {
-        session.Disconnect();
-        AudioDecoderRegistry::GetInstance().Release();
-        return false;
-    }
     active_ = true;
     stopping_ = false;
+    bool ok = false;
     Mp3Pipeline pipe;
     if (pipe.Open(stopping_)) {
-        int waited = 0;
-        while (!stopping_ && waited < 60000) {
-            pipe.Drain(session);
-            if (session.AudioAvailable() == 0 && session.Idle()) break;
-            vTaskDelay(pdMS_TO_TICKS(20));
-            waited += 20;
+        if (TtsGetProvider() == "http") {
+            TtsRequest req;
+            req.text = text;
+            req.voice = voice.empty() ? TtsGetVoice() : voice;
+            req.speed = speed;
+            req.on_audio = [&pipe](const uint8_t* data, size_t len) {
+                pipe.Consume(const_cast<uint8_t*>(data), len);
+            };
+            req.on_done = [](bool success, const std::string& error) {
+                if (!success) ESP_LOGE(TAG, "HTTP TTS failed: %s", error.c_str());
+            };
+            ok = TtsSynthesize(req);
+        } else {
+            auto& session = EdgeSession::GetTestInstance();
+            if (!session.Connect(voice.empty() ? TtsGetVoice() : voice, speed)) {
+                ESP_LOGE(TAG, "test connect failed");
+            } else if (!session.Speak(text)) {
+                session.Disconnect();
+            } else {
+                int waited = 0;
+                while (!stopping_ && waited < 60000) {
+                    pipe.Drain(session);
+                    if (session.AudioAvailable() == 0 && session.Idle()) break;
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    waited += 20;
+                }
+                session.Disconnect();
+                ok = true;
+            }
         }
         pipe.Close();
     }
-    session.Disconnect();
     AudioDecoderRegistry::GetInstance().Release();
     active_ = false;
-    return true;
+    return ok;
 }
 
 void EbookPlayer::PlayTestAsync(const std::string& text, const std::string& voice, int speed) {
@@ -313,6 +350,67 @@ void EbookPlayer::PlayTestAsync(const std::string& text, const std::string& voic
     }, "tts_test", 20480, params.release(), 2, nullptr);
 }
 
+void EbookPlayer::HttpSynthesis() {
+    int failures = 0;
+    int sentences = 0;
+    while (active_ && !stopping_) {
+        if (skip_requested_.exchange(false)) {
+            http_ring_.Reset();
+            failures = 0;
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (http_ring_.Available() >= 384 * 1024) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        std::string sentence;
+        if (!stream_.NextSentence(sentence)) {
+            if (stream_.EndOfFile()) {
+                finish_error_ = stream_.HasError();
+                feed_done_ = true;
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(500));  // transient HTTP error
+            continue;
+        }
+        if (sentence.empty()) continue;
+
+        TtsRequest req;
+        req.text = sentence;
+        req.voice = TtsGetVoice();
+        req.speed = TtsGetSpeed();
+        req.on_audio = [this](const uint8_t* data, size_t len) {
+            http_ring_.Write(data, len);
+        };
+        bool ok = false;
+        for (int attempt = 0; attempt < 3 && !stopping_; ++attempt) {
+            req.on_done = [&ok](bool success, const std::string&) { ok = success; };
+            if (TtsSynthesize(req)) {
+                ok = true;
+                break;
+            }
+            if (++failures >= 3) {
+                ESP_LOGE(TAG, "HTTP TTS failed %d times, stopping playback", failures);
+                finish_error_ = true;
+                feed_done_ = true;
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(300 * (attempt + 1)));
+        }
+        if (!ok) {
+            finish_error_ = true;
+            feed_done_ = true;
+            return;
+        }
+        failures = 0;
+        ++paragraph_;
+        if (++sentences % 10 == 0) {
+            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+        }
+    }
+}
+
 void EbookPlayer::SynthTask(void* arg) {
     auto* self = static_cast<EbookPlayer*>(arg);
     auto& session = EdgeSession::GetInstance();
@@ -321,6 +419,10 @@ void EbookPlayer::SynthTask(void* arg) {
         self->synth_task_ = nullptr;
         vTaskDelete(nullptr);
     };
+    if (TtsGetProvider() == "http") {
+        self->HttpSynthesis();
+        bail();
+    }
     if (!session.Connect(TtsGetVoice(), TtsGetSpeed())) {
         ESP_LOGE(TAG, "EdgeSession connect failed");
         self->feed_done_ = true;
@@ -425,9 +527,12 @@ void EbookPlayer::PlayTask(void* arg) {
     Mp3Pipeline pipe;
     if (pipe.Open(self->stopping_)) {
         while (!self->stopping_) {
+            // 两种方案的 ring 都排空：当前 provider 用的那个有数据，另一个为空。
+            pipe.Drain(self->http_ring_);
             pipe.Drain(session);
-            if (self->feed_done_ && session.AudioAvailable() == 0) break;
-            if (!self->active_ && session.AudioAvailable() == 0) break;
+            size_t avail = self->http_ring_.Available() + session.AudioAvailable();
+            if (self->feed_done_ && avail == 0) break;
+            if (!self->active_ && avail == 0) break;
             vTaskDelay(pdMS_TO_TICKS(10));
         }
         pipe.Close();
@@ -441,7 +546,16 @@ void EbookPlayer::PlayTask(void* arg) {
             ESP_LOGI(TAG, "Book finished");
         }
     }
-    if (!self->paused_) self->active_ = false;
+    if (!self->paused_) {
+        self->active_ = false;
+        // 自然播完/出错退出时释放播放常开标记；暂停退出由 Resume 接管，不能清。
+        auto& app = Application::GetInstance();
+        app.GetAudioService().SetExternalPlaybackActive(false);
+        if (!app.IsExternalPlaybackActive()) {
+            app.GetAudioService().EnableVoiceProcessing(true);
+        }
+        app.SetLowPowerIfIdle();
+    }
     self->play_task_ = nullptr;
     vTaskDelete(nullptr);
 }

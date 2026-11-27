@@ -7,6 +7,7 @@
 
 #include "ebook_reader.h"
 #include "text_stream.h"
+#include "tts/audio_ring.h"
 #include <esp_audio_simple_dec.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -50,6 +51,9 @@ private:
     std::atomic<bool> skip_requested_{false};
     std::atomic<bool> feed_done_{false};
     bool finish_error_ = false;  // stream ended because of repeated HTTP errors
+    AudioRing http_ring_{512 * 1024};
+    void KeepOutputAlive();      // 暂停期间保持 I2S 输出常开，避免恢复时重配爆音
+    void HttpSynthesis();        // HTTP provider 的逐句合成循环
     EbookBook book_;
     TextStream stream_;
     std::string book_url_;
