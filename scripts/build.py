@@ -993,6 +993,8 @@ def _collect_variants(
             variant_name=variant["name"],
         )
         variant["config"] = config_symbol
+        variant["language"] = build.get("language")
+        variant["wake_word"] = build.get("wake_word")
         variant["display_name"] = _get_board_display_name(config_symbol)
         variant["wake_word_supported"] = _board_supports_wake_word(
             variant["target"],

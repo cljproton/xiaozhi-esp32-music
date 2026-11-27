@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <esp_log.h>
 
 namespace web_auth {
@@ -17,6 +18,7 @@ constexpr const char* kKey = "password";
 constexpr const char* TAG = "WebAuth";
 
 std::string cached_password_;
+std::mutex password_mutex_;
 
 char HexDigit(unsigned char v) { return v < 10 ? '0' + v : 'a' + (v - 10); }
 
@@ -30,6 +32,7 @@ int HexValue(char c) {
 }  // namespace
 
 std::string GetPassword() {
+    std::lock_guard<std::mutex> lock(password_mutex_);
     if (!cached_password_.empty()) {
         return cached_password_;
     }
@@ -46,10 +49,18 @@ bool IsDefaultPassword() { return GetPassword() == kDefaultPassword; }
 bool CheckPassword(const std::string& password) { return password == GetPassword(); }
 
 bool ChangePassword(const std::string& old_password, const std::string& new_password) {
+    std::lock_guard<std::mutex> lock(password_mutex_);
     if (new_password.empty() || new_password.size() > 64) {
         return false;
     }
-    if (!CheckPassword(old_password) || new_password == old_password) {
+    // 检查和写入必须原子，否则两个并发请求都会以为旧密码正确。
+    std::string current = cached_password_;
+    if (current.empty()) {
+        Settings settings(kNamespace, false);
+        current = settings.GetString(kKey, kDefaultPassword);
+        if (current.empty()) current = kDefaultPassword;
+    }
+    if (old_password != current || new_password == current) {
         return false;
     }
     Settings settings(kNamespace, true);

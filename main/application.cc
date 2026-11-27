@@ -2429,8 +2429,17 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
 }
 
 void Application::Schedule(std::function<void()>&& callback) {
+    constexpr size_t kMaxScheduledTasks = 64;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (main_tasks_.size() >= kMaxScheduledTasks) {
+            // 服务端消息风暴时丢弃最旧的 UI 更新，不让队列吃光堆。
+            main_tasks_.pop_front();
+            static uint32_t dropped = 0;
+            if (++dropped % 64 == 1) {
+                ESP_LOGW(TAG, "Dropping stale scheduled tasks (%u total)", dropped);
+            }
+        }
         main_tasks_.push_back(std::move(callback));
     }
     xEventGroupSetBits(event_group_, MAIN_EVENT_SCHEDULE);

@@ -151,9 +151,19 @@ std::string HttpGet(const char* url) {
     esp_err_t err = esp_http_client_open(client, 0);
     if (err == ESP_OK) {
         int64_t content_length = esp_http_client_fetch_headers(client);
+        // 外部服务可能返回无限分块流；限制响应体，避免把设备堆吃光。
+        constexpr size_t kMaxBodySize = 64 * 1024;
+        size_t limit = kMaxBodySize;
+        if (content_length > 0 && content_length < static_cast<int64_t>(limit)) {
+            limit = static_cast<size_t>(content_length);
+        }
         char buf[1024];
         int read;
-        while ((read = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
+        while (body.size() < limit &&
+               (read = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
+            if (body.size() + static_cast<size_t>(read) > limit) {
+                break;
+            }
             body.append(buf, read);
         }
     }

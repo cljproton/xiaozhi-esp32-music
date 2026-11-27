@@ -185,7 +185,7 @@ esp_err_t HandleTtsConfigGet(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "voice", TtsGetVoice().c_str());
     cJSON_AddNumberToObject(root, "speed", TtsGetSpeed());
     cJSON_AddStringToObject(root, "url", TtsGetHttpUrl().c_str());
-    cJSON_AddStringToObject(root, "api_key", TtsGetApiKey().c_str());
+    cJSON_AddBoolToObject(root, "api_key_set", !TtsGetApiKey().empty());
     Settings src("ebook", false);
     cJSON_AddStringToObject(root, "source_url", src.GetString("source_url", "").c_str());
     cJSON_AddStringToObject(root, "source_user", src.GetString("source_user", "").c_str());

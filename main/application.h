@@ -7,6 +7,7 @@
 #include <esp_timer.h>
 
 #include <string>
+#include <atomic>
 #include <mutex>
 #include <deque>
 #include <memory>
@@ -310,7 +311,7 @@ private:
     bool pending_radio_wait_tts_ = false;       // 等本轮 TTS 结束再起流
     bool radio_playing_ = false;
     bool radio_switching_ = false;  // 切台中：输出与 WiFi 保持性能档
-    uint32_t switch_seq_ = 0;
+    std::atomic<uint32_t> switch_seq_{0};
     esp_timer_handle_t radio_watchdog_timer_ = nullptr;
     esp_timer_handle_t radio_pending_timer_ = nullptr;  // TTS 等待兜底超时
     bool radio_watchdog_armed_ = false;

@@ -1,57 +1,7 @@
 #include "ebook_reader.h"
 #include "gbk_table.h"
 
-#include "board.h"
-
-#include <esp_http_client.h>
-#include <esp_crt_bundle.h>
-#include <esp_log.h>
-
-#include <algorithm>
-#include <cstring>
 #include <string>
-#include <vector>
-
-#define TAG "EbookReader"
-
-namespace {
-
-std::string HttpGet(const std::string& url, const std::string& username,
-                    const std::string& password) {
-    esp_http_client_config_t cfg = {};
-    cfg.url = url.c_str();
-    if (url.rfind("https://", 0) == 0) cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.timeout_ms = 30000;
-    cfg.buffer_size = 8192;
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) return "";
-    if (!username.empty()) {
-        esp_http_client_set_username(client, username.c_str());
-        esp_http_client_set_password(client, password.c_str());
-        esp_http_client_set_authtype(client, HTTP_AUTH_TYPE_BASIC);
-    }
-    std::string body;
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err == ESP_OK) {
-        esp_http_client_fetch_headers(client);
-        int status = esp_http_client_get_status_code(client);
-        if (status == 200) {
-            char buf[1024];
-            int read;
-            while ((read = esp_http_client_read(client, buf, sizeof(buf))) > 0) {
-                body.append(buf, read);
-            }
-        } else {
-            ESP_LOGE(TAG, "HTTP GET status %d", status);
-        }
-    } else {
-        ESP_LOGE(TAG, "HTTP GET open failed: %s", esp_err_to_name(err));
-    }
-    esp_http_client_cleanup(client);
-    return body;
-}
-
-}  // namespace
 
 // WebDAV hrefs are percent-encoded; decode once, plus a second pass for
 // double-encoded names (e.g. %255B -> %5B) seen on some servers.
@@ -136,57 +86,4 @@ std::string GbkToUtf8(const std::string& in) {
         ++i;
     }
     return out;
-}
-
-std::vector<std::string> EbookMergeParagraphs(const std::string& text, size_t target_chars) {
-    std::vector<std::string> out;
-    std::string cur;
-    for (size_t i = 0; i < text.size(); ++i) {
-        unsigned char c = static_cast<unsigned char>(text[i]);
-        cur.push_back(static_cast<char>(c));
-        // Break at Chinese sentence punctuation or newlines
-        if (c == '\n' || c == 0xE3) {  // 0xE3 begins UTF-8 punctuation (。！？；)
-            if (i + 2 < text.size()) {
-                unsigned char c2 = static_cast<unsigned char>(text[i + 1]);
-                unsigned char c3 = static_cast<unsigned char>(text[i + 2]);
-                bool punct = (c2 == 0x80 && (c3 == 0x82 || c3 == 0x81)) ||  // 。、
-                             (c2 == 0x81 && (c3 == 0x81 || c3 == 0x82)) ||  // ！、
-                             (c2 == 0x81 && c3 == 0x89) ||                   // ？
-                             (c2 == 0x81 && c3 == 0x90);                     // ；
-                if (punct) { cur += text.substr(i + 1, 2); i += 2; }
-            }
-        }
-        if (cur.size() >= target_chars) {
-            out.push_back(cur);
-            cur.clear();
-        }
-    }
-    if (!cur.empty()) out.push_back(cur);
-    return out;
-}
-
-EbookBook EbookLoad(const std::string& url, const std::string& username,
-                    const std::string& password) {
-    EbookBook book;
-    std::string data = HttpGet(url, username, password);
-    if (data.empty()) {
-        book.error = "Failed to download book";
-        ESP_LOGE(TAG, "Failed to download book: %s", url.c_str());
-        return book;
-    }
-    ESP_LOGI(TAG, "Downloaded book %u bytes", (unsigned)data.size());
-    if (!IsValidUtf8(data)) {
-        data = GbkToUtf8(data);
-        ESP_LOGI(TAG, "Converted GBK book to UTF-8 (%u bytes)", (unsigned)data.size());
-    }
-    std::string lower = url;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-
-    if (lower.find(".txt") != std::string::npos) {
-        book.paragraphs = EbookMergeParagraphs(data, 300);
-        book.name = url.substr(url.find_last_of('/') + 1);
-        return book;
-    }
-    book.error = "Unsupported format (only TXT supported)";
-    return book;
 }

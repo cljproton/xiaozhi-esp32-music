@@ -164,6 +164,10 @@ private:
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
+    // PushPcmPlaybackTask 专用；output_resampler_ 归 Opus 路径，采样率不同。
+    esp_ae_rate_cvt_handle_t pcm_resampler_ = nullptr;
+    int pcm_resampler_src_ = 0;
+    int pcm_resampler_dst_ = 0;
 
     // Encoder/Decoder state
     int encoder_sample_rate_ = 16000;

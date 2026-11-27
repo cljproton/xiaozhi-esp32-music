@@ -266,5 +266,15 @@ void EdgeSession::WriteAudio(const uint8_t* data, size_t len) {
         ring_.Write(kId3, sizeof(kId3));
         id3_sent_ = true;
     }
-    ring_.Write(data, len);
+    // AudioRing::Write 在满 1 秒后只写部分字节；漏写会截断 MP3 帧，
+    // 表现为爆音。写不满就重试，并记下最终丢了多少。
+    size_t off = 0;
+    while (off < len) {
+        size_t n = ring_.Write(data + off, len - off);
+        if (n == 0) {
+            ESP_LOGW(TAG, "audio ring full, dropped %u bytes", (unsigned)(len - off));
+            break;
+        }
+        off += n;
+    }
 }

@@ -1541,7 +1541,7 @@ class LanguageBuildTests(unittest.TestCase):
         ):
             yield prepare, configure, validate
 
-    def test_all_variants_default_to_english_and_accept_every_language(self):
+    def test_all_variants_use_configured_default_and_accept_every_language(self):
         with contextlib.redirect_stderr(io.StringIO()):
             variants = build._collect_variants(idf_version=(6, 1, 0))
         cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
@@ -1570,7 +1570,9 @@ class LanguageBuildTests(unittest.TestCase):
                         target, fragment, name, _ = configure.call_args.args
                         self.assertEqual(target, variant["target"])
                         self.assertEqual(name, variant["name"])
-                        expected = language_options["en-US" if language is None else language]
+                        default_language = variant.get("language") or "en-US"
+                        effective = default_language if language is None else language
+                        expected = language_options[effective]
                         self.assertEqual(
                             [item for item in fragment if item.startswith("CONFIG_LANGUAGE_")],
                             [expected],
@@ -1578,7 +1580,12 @@ class LanguageBuildTests(unittest.TestCase):
                         validate.assert_any_call([expected.split("=", 1)[0]], "--language")
                         models = [item for item in fragment if item.startswith("CONFIG_SR_WN_")]
                         if variant["wake_word_supported"]:
-                            chinese = language in {"zh-CN", "zh-TW"}
+                            board_wake_word = variant.get("wake_word")
+                            chinese = (
+                                board_wake_word == "nihaoxiaozhi"
+                                if board_wake_word
+                                else effective in {"zh-CN", "zh-TW"}
+                            )
                             if target in {"esp32c3", "esp32c5", "esp32c6"}:
                                 model = "WN9S_NIHAOXIAOZHI" if chinese else "WN9S_HIESP"
                             else:

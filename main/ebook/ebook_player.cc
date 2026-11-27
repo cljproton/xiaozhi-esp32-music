@@ -63,9 +63,17 @@ struct Mp3Pipeline {
     bool have_info = false;
     size_t pcm_bytes = 0;
     const std::atomic<bool>* stopping = nullptr;
+    const std::atomic<uint32_t>* session = nullptr;
+    uint32_t session_id = 0;
 
-    bool Open(const std::atomic<bool>& stop) {
+    bool IsCurrent() const {
+        return session == nullptr || session->load() == session_id;
+    }
+
+    bool Open(const std::atomic<bool>& stop, const std::atomic<uint32_t>& sid) {
         stopping = &stop;
+        session = &sid;
+        session_id = sid.load();
         esp_audio_simple_dec_cfg_t cfg = {};
         cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         cfg.use_frame_dec = false;
@@ -91,7 +99,7 @@ struct Mp3Pipeline {
 
     void Flush() {
         if (batch.empty()) return;
-        if (stopping == nullptr || !stopping->load()) {
+        if (IsCurrent() && (stopping == nullptr || !stopping->load())) {
             Application::GetInstance().GetAudioService().PushPcmPlaybackTask(
                 std::move(batch), sample_rate, channels, ++pcm_id, 0);
         }
@@ -115,6 +123,7 @@ struct Mp3Pipeline {
 
     // 把一段 MP3 字节流解成 PCM；Edge 的 ring 读取和 HTTP 的回调都走这里。
     void Consume(uint8_t* mp3, size_t n) {
+        if (!IsCurrent()) return;
         size_t off = 0;
         while (off < n) {
             esp_audio_simple_dec_raw_t raw = {};
@@ -123,7 +132,11 @@ struct Mp3Pipeline {
             esp_audio_simple_dec_out_t pcm_out = {};
             pcm_out.buffer = out;
             pcm_out.len = kOutSize;
-            esp_audio_simple_dec_process(dec, &raw, &pcm_out);
+            auto dec_ret = esp_audio_simple_dec_process(dec, &raw, &pcm_out);
+            if (dec_ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGW(TAG, "mp3 decode error %d, consumed %u", (int)dec_ret,
+                         (unsigned)raw.consumed);
+            }
             if (raw.consumed == 0 && pcm_out.decoded_size == 0) break;  // stuck
             off += raw.consumed;
             if (pcm_out.decoded_size == 0) continue;
@@ -207,6 +220,7 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
     feed_done_ = false;
     finish_error_ = false;
     http_ring_.Reset();
+    ++session_id_;
     KeepOutputAlive();
     // Decode/playback runs on its own task so a reconnect or a slow HTTP Range
     // fetch can never starve the I2S output.
@@ -283,6 +297,7 @@ bool EbookPlayer::Seek(int percent) {
     feed_done_ = false;
     finish_error_ = false;
     http_ring_.Reset();
+    ++session_id_;
     KeepOutputAlive();
     xTaskCreatePinnedToCore(PlayTask, "ebook_play", 8192, this, 4, &play_task_, 1);
     xTaskCreatePinnedToCore(SynthTask, "ebook_synth", 12288, this, 2, &synth_task_, 0);
@@ -310,7 +325,7 @@ bool EbookPlayer::PlayTest(const std::string& text, const std::string& voice, in
     stopping_ = false;
     bool ok = false;
     Mp3Pipeline pipe;
-    if (pipe.Open(stopping_)) {
+    if (pipe.Open(stopping_, session_id_)) {
         if (TtsGetProvider() == "http") {
             TtsRequest req;
             req.text = text;
@@ -533,7 +548,7 @@ void EbookPlayer::PlayTask(void* arg) {
         return;
     }
     Mp3Pipeline pipe;
-    if (pipe.Open(self->stopping_)) {
+    if (pipe.Open(self->stopping_, self->session_id_)) {
         while (!self->stopping_) {
             // 两种方案的 ring 都排空：当前 provider 用的那个有数据，另一个为空。
             pipe.Drain(self->http_ring_);

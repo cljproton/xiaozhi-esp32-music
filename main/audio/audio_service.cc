@@ -43,6 +43,9 @@ AudioService::~AudioService() {
     if (output_resampler_ != nullptr) {
         esp_ae_rate_cvt_close(output_resampler_);
     }
+    if (pcm_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(pcm_resampler_);
+    }
 }
 
 void AudioService::Initialize(AudioCodec* codec) {
@@ -662,15 +665,29 @@ bool AudioService::PushPcmPlaybackTask(std::vector<int16_t>&& pcm, int sample_ra
         task.pcm = std::move(mixed);
     }
     if (!task.pcm.empty() && sample_rate != codec_->output_sample_rate()) {
-        if (output_resampler_ == nullptr) {
-            return false;
+        int dst_rate = codec_->output_sample_rate();
+        if (pcm_resampler_ == nullptr || pcm_resampler_src_ != sample_rate ||
+            pcm_resampler_dst_ != dst_rate) {
+            if (pcm_resampler_ != nullptr) {
+                esp_ae_rate_cvt_close(pcm_resampler_);
+                pcm_resampler_ = nullptr;
+            }
+            esp_ae_rate_cvt_cfg_t cfg = RATE_CVT_CFG(sample_rate, dst_rate, ESP_AUDIO_MONO);
+            auto ret = esp_ae_rate_cvt_open(&cfg, &pcm_resampler_);
+            if (pcm_resampler_ == nullptr) {
+                ESP_LOGE(TAG, "Failed to create PCM resampler %d->%d: %d", sample_rate, dst_rate,
+                         (int)ret);
+                return false;
+            }
+            pcm_resampler_src_ = sample_rate;
+            pcm_resampler_dst_ = dst_rate;
         }
         uint32_t target_size = 0;
-        esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task.pcm.size(), &target_size);
+        esp_ae_rate_cvt_get_max_out_sample_num(pcm_resampler_, task.pcm.size(), &target_size);
         std::vector<int16_t> resampled(target_size);
         uint32_t actual_output = target_size;
-        esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task.pcm.data(), task.pcm.size(),
-                                 (esp_ae_sample_t)resampled.data(), &actual_output);
+        esp_ae_rate_cvt_process(pcm_resampler_, (esp_ae_sample_t)task.pcm.data(), task.pcm.size(),
+                                (esp_ae_sample_t)resampled.data(), &actual_output);
         task.pcm = std::move(resampled);
         task.pcm.resize(actual_output);
     }

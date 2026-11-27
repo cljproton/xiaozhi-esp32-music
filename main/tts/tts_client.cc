@@ -1,5 +1,6 @@
 #include "tts_client.h"
 #include "settings.h"
+#include "cjson_utils.h"
 
 #include <esp_http_client.h>
 #include <esp_websocket_client.h>
@@ -259,11 +260,18 @@ bool HttpSynthesize(const TtsRequest& req) {
         req.on_done(false, "HTTP TTS URL not configured");
         return false;
     }
-    char speed[16];
-    snprintf(speed, sizeof(speed), "%.2f", 1.0f + req.speed / 100.0f);
-    std::string body = std::string("{\"model\":\"tts-1\",\"input\":\"") + XmlEscape(req.text) +
-                       "\",\"voice\":\"" + req.voice + "\",\"response_format\":\"mp3\","
-                       "\"speed\":" + speed + "}";
+    CJsonUniquePtr json(cJSON_CreateObject());
+    cJSON_AddStringToObject(json.get(), "model", "tts-1");
+    cJSON_AddStringToObject(json.get(), "input", req.text.c_str());
+    cJSON_AddStringToObject(json.get(), "voice", req.voice.c_str());
+    cJSON_AddStringToObject(json.get(), "response_format", "mp3");
+    cJSON_AddNumberToObject(json.get(), "speed", 1.0 + req.speed / 100.0);
+    CJsonStringUniquePtr printed(cJSON_PrintUnformatted(json.get()));
+    if (!printed) {
+        req.on_done(false, "failed to build HTTP TTS request");
+        return false;
+    }
+    std::string body(printed.get());
 
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();

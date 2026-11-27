@@ -50,6 +50,7 @@ private:
     std::atomic<bool> stopping_{false};
     std::atomic<bool> skip_requested_{false};
     std::atomic<bool> feed_done_{false};
+    std::atomic<uint32_t> session_id_{0};  // 旧任务的残留 PCM 不能串进新一局
     bool finish_error_ = false;  // stream ended because of repeated HTTP errors
     AudioRing http_ring_{512 * 1024};
     void KeepOutputAlive();      // 暂停期间保持 I2S 输出常开，避免恢复时重配爆音
