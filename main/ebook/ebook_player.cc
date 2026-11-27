@@ -12,6 +12,7 @@
 #include <deque>
 #include <mutex>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <tuple>
 #include <utility>
@@ -68,8 +69,13 @@ struct Mp3Pipeline {
         esp_audio_simple_dec_cfg_t cfg = {};
         cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         cfg.use_frame_dec = false;
-        if (esp_audio_simple_dec_open(&cfg, &dec) != ESP_AUDIO_ERR_OK || dec == nullptr) {
-            ESP_LOGE(TAG, "simple dec open failed");
+        auto ret = esp_audio_simple_dec_open(&cfg, &dec);
+        if (ret != ESP_AUDIO_ERR_OK || dec == nullptr) {
+            ESP_LOGE(TAG, "simple dec open failed: %d, internal %u KB, PSRAM %u KB, largest %u KB",
+                     (int)ret,
+                     (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                     (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                     (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
             dec = nullptr;
             return false;
         }
@@ -102,6 +108,9 @@ struct Mp3Pipeline {
         dec = nullptr;
         if (out != nullptr) free(out);
         out = nullptr;
+        // PlayTask 用 vTaskDelete 退出，局部对象的析构器不会跑；必须在这里
+        // 释放 batch 的 24KB，否则每播一次泄漏一份，最终 decoder open 失败。
+        std::vector<int16_t>().swap(batch);
     }
 
     // 把一段 MP3 字节流解成 PCM；Edge 的 ring 读取和 HTTP 的回调都走这里。
