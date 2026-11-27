@@ -133,7 +133,7 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
   <div class="cards">
     <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music">音乐播放器</h2><small id="d-music">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
     <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio">网络电台</h2><small id="d-radio">搜索、收藏和播放网络电台</small></a>
-    <a class="card" href="/book"><div class="icon">📖</div><h2>电子书朗读</h2><small>WebDAV 加载 TXT/EPUB，在线 TTS 朗读</small></a>
+    <a class="card" href="/book"><div class="icon">📖</div><h2>电子书朗读</h2><small>WebDAV 加载 TXT，在线 TTS 朗读</small></a>
     <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、天气</small></a>
   </div>
 </div>

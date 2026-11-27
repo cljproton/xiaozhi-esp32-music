@@ -10,7 +10,7 @@ struct EbookBook {
 };
 
 // Download and parse an ebook from an HTTP(S) URL (WebDAV).
-// Supports TXT (UTF-8) and EPUB (ZIP containing XHTML). Other formats return error.
+// Supports TXT only (UTF-8 or GBK). Other formats return error.
 EbookBook EbookLoad(const std::string& url, const std::string& username = "",
                     const std::string& password = "");
 

@@ -517,10 +517,12 @@ void McpServer::AddCommonTools() {
 #endif  // CONFIG_USE_RADIO
 
     // E-book (TTS) playback tools
-    AddTool("ebook.list", "列出 WebDAV 书源中的电子书（TXT/EPUB），返回书名列表。不传参数时使用网页端保存的书源。",
+    AddTool("ebook.list", "分页列出 WebDAV 书源中的电子书（TXT），只返回书名。默认第 1 页、每页 20 本；用 page 翻页。播放时用 ebook.play 的 name 参数。",
             PropertyList({Property("url", kPropertyTypeString, ""),
                           Property("username", kPropertyTypeString, ""),
-                          Property("password", kPropertyTypeString, "")}),
+                          Property("password", kPropertyTypeString, ""),
+                          Property("page", kPropertyTypeInteger, 1, 1, 1000),
+                          Property("page_size", kPropertyTypeInteger, 20, 1, 50)}),
             [](const PropertyList& properties) -> ReturnValue {
                 Settings src("ebook", false);
                 std::string url = properties["url"].value<std::string>();
@@ -530,16 +532,39 @@ void McpServer::AddCommonTools() {
                 if (user.empty()) user = src.GetString("source_user", "");
                 if (pass.empty()) pass = src.GetString("source_pass", "");
                 if (url.empty()) return std::string("未配置书源，请先在网页端 /book 保存或在参数中提供 url");
+                int page = properties["page"].value<int>();
+                int page_size = properties["page_size"].value<int>();
                 std::string error;
                 int total = 0;
-                cJSON* books = ebook_api::ListSourceBooks(url, user, pass, 0, 0, total, error);
+                // 全量列表（276 本）的 JSON 约 100KB，超过 MQTT 单次发布上限，
+                // 会导致工具结果发送失败、连接断开。只取一页且只回书名。
+                cJSON* books = ebook_api::ListSourceBooks(url, user, pass,
+                                                          (page - 1) * page_size, page_size,
+                                                          total, error);
                 if (books == nullptr) return std::string("列出书目失败: ") + error;
+                cJSON* slim = cJSON_CreateArray();
+                for (int i = 0; i < cJSON_GetArraySize(books); ++i) {
+                    cJSON* b = cJSON_GetArrayItem(books, i);
+                    auto* n = cJSON_GetObjectItem(b, "name");
+                    if (!cJSON_IsString(n)) continue;
+                    cJSON* item = cJSON_CreateObject();
+                    cJSON_AddStringToObject(item, "name", n->valuestring);
+                    auto* progress = cJSON_GetObjectItem(b, "progress");
+                    if (cJSON_IsNumber(progress)) {
+                        cJSON_AddNumberToObject(item, "progress", progress->valueint);
+                    }
+                    cJSON_AddItemToArray(slim, item);
+                }
+                cJSON_Delete(books);
                 cJSON* res = cJSON_CreateObject();
                 cJSON_AddStringToObject(res, "status", "ok");
-                cJSON_AddItemToObject(res, "books", books);
+                cJSON_AddNumberToObject(res, "total", total);
+                cJSON_AddNumberToObject(res, "page", page);
+                cJSON_AddNumberToObject(res, "pages", (total + page_size - 1) / page_size);
+                cJSON_AddItemToObject(res, "books", slim);
                 return res;
             });
-    AddTool("ebook.play", "朗读电子书（TXT/EPUB）。可用 name 模糊匹配书名（不传 url 时使用网页端保存的书源），或直接用 url 指定完整文件地址。",
+    AddTool("ebook.play", "朗读 TXT 电子书。可用 name 模糊匹配书名（不传 url 时使用网页端保存的书源），或直接用 url 指定完整文件地址。",
             PropertyList({Property("name", kPropertyTypeString, ""),
                           Property("url", kPropertyTypeString, ""),
                           Property("username", kPropertyTypeString, ""),
