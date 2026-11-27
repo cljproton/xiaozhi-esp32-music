@@ -351,12 +351,11 @@ void EbookPlayer::PlayTestAsync(const std::string& text, const std::string& voic
 }
 
 void EbookPlayer::HttpSynthesis() {
-    int failures = 0;
+    constexpr int kMaxAttempts = 8;  // 服务重启/抖动时重试并续读，不是一失败就断
     int sentences = 0;
     while (active_ && !stopping_) {
         if (skip_requested_.exchange(false)) {
             http_ring_.Reset();
-            failures = 0;
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
@@ -384,26 +383,26 @@ void EbookPlayer::HttpSynthesis() {
             http_ring_.Write(data, len);
         };
         bool ok = false;
-        for (int attempt = 0; attempt < 3 && !stopping_; ++attempt) {
+        for (int attempt = 0; attempt < kMaxAttempts && !stopping_; ++attempt) {
             req.on_done = [&ok](bool success, const std::string&) { ok = success; };
             if (TtsSynthesize(req)) {
                 ok = true;
                 break;
             }
-            if (++failures >= 3) {
-                ESP_LOGE(TAG, "HTTP TTS failed %d times, stopping playback", failures);
-                finish_error_ = true;
-                feed_done_ = true;
-                return;
+            ESP_LOGW(TAG, "HTTP TTS attempt %d/%d failed", attempt + 1, kMaxAttempts);
+            if (attempt + 1 < kMaxAttempts) {
+                int delay_ms = std::min(10000, 500 * (1 << std::min(attempt, 4)));
+                vTaskDelay(pdMS_TO_TICKS(delay_ms));
             }
-            vTaskDelay(pdMS_TO_TICKS(300 * (attempt + 1)));
         }
         if (!ok) {
+            ESP_LOGE(TAG, "HTTP TTS gave up after %d attempts", kMaxAttempts);
+            // 进度停在失败句之前，下次播放从 NVS 接着读。
+            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
             finish_error_ = true;
             feed_done_ = true;
             return;
         }
-        failures = 0;
         ++paragraph_;
         if (++sentences % 10 == 0) {
             SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
