@@ -2124,6 +2124,7 @@ void Application::StopRadio(std::function<void()> on_stopped) {
     if (!switching) {
         audio_service_.SetExternalPlaybackActive(false);
         SetBacklightForPlayback(false);
+        SetLowPowerIfIdle();
     }
     ArmRadioWatchdog(false);
     if (radio_stop_handler_) {

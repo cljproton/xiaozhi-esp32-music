@@ -1,7 +1,9 @@
 #include "radio_source.h"
 #include "application.h"
+#include "board.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <mutex>
 #include <string>
@@ -70,15 +72,20 @@ size_t SelectHlsBufferSize() {
 }
 
 // 连续失败上限：避免无效 URL 无限重连、麦克风一直静音。
-constexpr int kMaxConsecutiveRestarts = 10;
+constexpr int kMaxConsecutiveRestarts = 30;
 // 借鉴 RadioDroid 的 settings_retry_delay=100ms: 固定短延迟快速重试。
 // 之前用 backoff_s*1000 传给微秒级 esp_timer, 实为 1~16ms, 网络抖动时
-// 1 秒内连击耗尽 10 次机会; 100ms 节奏给网络恢复留出窗口。
+// 1 秒内连击耗尽重试机会; 100ms 节奏给网络恢复留出窗口。
 constexpr uint64_t kRetryDelayUs = 100 * 1000;
 
-// 海外台链路抖动时 10s 读超时会被误判为断流并触发整机重建（实测静音 18s），
-// 保持 vendor 默认的 30s 读超时，配合 1MB 环形缓冲吸收抖动。
+// 直连流 10s 读超时会被误判为断流并触发整机重建（实测静音 18s），保留 vendor
+// 的 30s；HLS 分片只有 5s，卡住时等 30s 没有意义，10s 超时后快速重试。
 constexpr int kHttpReadTimeoutMs = 30 * 1000;
+constexpr int kHlsHttpReadTimeoutMs = 10 * 1000;
+
+// 无声多久算卡住，以及软恢复失败后多久升级为整机重建。
+constexpr int64_t kPcmStallUs = 6 * 1000 * 1000;
+constexpr uint64_t kSoftRecoverUs = 4 * 1000 * 1000;
 
 class RadioSourceHLS : public RadioSource {
 public:
@@ -94,6 +101,14 @@ public:
             .skip_unhandled_events = true,
         };
         ESP_ERROR_CHECK(esp_timer_create(&restart_backoff_timer_args, &restart_backoff_timer_));
+        esp_timer_create_args_t soft_recover_timer_args = {
+            .callback = &RadioSourceHLS::SoftRecoverTimerCallback,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "radio_soft_recover",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&soft_recover_timer_args, &soft_recover_timer_));
     }
 
     ~RadioSourceHLS() {
@@ -107,6 +122,11 @@ public:
             esp_timer_stop(restart_backoff_timer_);
             esp_timer_delete(restart_backoff_timer_);
             restart_backoff_timer_ = nullptr;
+        }
+        if (soft_recover_timer_ != nullptr) {
+            esp_timer_stop(soft_recover_timer_);
+            esp_timer_delete(soft_recover_timer_);
+            soft_recover_timer_ = nullptr;
         }
         if (buffer_log_timer_ != nullptr) {
             esp_timer_stop(buffer_log_timer_);
@@ -136,6 +156,9 @@ public:
         }
 
         current_url_ = url;
+        is_hls_ = url.find(".m3u8") != std::string::npos;
+        // 起播/自动重连同样需要低延迟链路：空闲档是 MAX_MODEM，会让取片更慢。
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         // Look up station gain from station manager (persisted in NVS).
         auto station_opt = station_manager_.FindByUrl(url);
         if (station_opt) {
@@ -156,6 +179,10 @@ public:
         preroll_done_ = false;
         quick_preroll_ = quick_preroll;  // 用户开台走完整预滚，自动重连走短预滚
         mute_ = false;
+        paused_ = false;
+        soft_recovery_ = false;
+        last_pcm_us_ = esp_timer_get_time();
+        esp_timer_stop(soft_recover_timer_);
         {
             std::lock_guard<std::mutex> lock(url_mutex_);
             last_url_ = url;
@@ -172,6 +199,7 @@ public:
             if (data_size <= 0 || !self->pcm_callback_) {
                 return data_size;
             }
+            self->last_pcm_us_ = esp_timer_get_time();
             int16_t* samples = reinterpret_cast<int16_t*>(data);
             size_t count = data_size / sizeof(int16_t);
             int gain = self->mute_ ? 0 : self->volume_ * self->gain_ / 100;
@@ -245,7 +273,8 @@ public:
                 if (msg->http_client) {
                     esp_http_client_handle_t client =
                         static_cast<esp_http_client_handle_t>(msg->http_client);
-                    esp_http_client_set_timeout_ms(client, kHttpReadTimeoutMs);
+                    esp_http_client_set_timeout_ms(client, self->is_hls_ ? kHlsHttpReadTimeoutMs
+                                                                         : kHttpReadTimeoutMs);
                     int fd = esp_http_client_get_socket(client);
                     if (fd >= 0) {
                         // lwIP TCP keepalive（空闲 20s / 探测间隔 10s / 3 次）:
@@ -361,6 +390,8 @@ public:
                         case ESP_ASP_STATE_RUNNING: {
                             self->SetState(RadioState::kPlaying, "Playing");
                             self->restart_count_ = 0;
+                            self->soft_recovery_ = false;
+                            esp_timer_stop(self->soft_recover_timer_);
                             // Session (re)started: Application mutes the mic via SetRadioPlaying.
                             Application::GetInstance().SetRadioPlaying(true);
                             break;
@@ -371,7 +402,7 @@ public:
                         case ESP_ASP_STATE_STOPPED:
                         case ESP_ASP_STATE_FINISHED:
                             self->SetState(RadioState::kStopped, "Stopped");
-                            // 意外停止（非用户发起）：与 kError 一样自动重启，最多 5 次。
+                            // 意外停止（非用户发起）：先只重置解码器，没恢复再整机重建。
                             // 防止服务器 reset 竞争后停在 stopped 静默死亡。
                             if (!self->stop_requested_) {
                                 std::string url;
@@ -380,13 +411,13 @@ public:
                                     url = self->last_url_;
                                 }
                                 if (!url.empty()) {
-                                    self->TriggerAutoRestart(url, RadioState::kStopped);
+                                    self->RecoverOrRestart(url);
                                 }
                             }
                             break;
                         case ESP_ASP_STATE_ERROR:
                             self->SetState(RadioState::kError, "Error");
-                            // 整条管道报错（如重连次数耗尽）时重建管道
+                            // 先试解码器级恢复，失败再由软恢复定时器升级为整机重建。
                             {
                                 std::string url;
                                 {
@@ -394,7 +425,7 @@ public:
                                     url = self->last_url_;
                                 }
                                 if (!url.empty()) {
-                                    self->TriggerAutoRestart(url, RadioState::kError);
+                                    self->RecoverOrRestart(url);
                                 }
                             }
                             break;
@@ -461,6 +492,25 @@ public:
                         size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
                         ESP_LOGI(TAG, "Buffer stats: internal=%zu KB, PSRAM=%zu KB, preroll_done=%d, preroll_size=%zu",
                                  internal_free, psram_free, self->preroll_done_, self->preroll_.size());
+                        // 状态还是 playing 但解码器不出声：晚高峰分片卡住时没有
+                        // ERROR 事件，只能靠这个看门狗发现。
+                        if (self->state_ == RadioState::kPlaying && !self->paused_.load() &&
+                            !self->soft_recovery_.load() &&
+                            esp_timer_get_time() - self->last_pcm_us_.load() > kPcmStallUs) {
+                            std::string url;
+                            {
+                                std::lock_guard<std::mutex> lock(self->url_mutex_);
+                                url = self->last_url_;
+                            }
+                            if (!url.empty()) {
+                                ESP_LOGW(TAG, "No PCM for 6s, attempting decoder-only recovery");
+                                Application::GetInstance().Schedule([self, url]() {
+                                    if (self->state_ == RadioState::kPlaying) {
+                                        self->RecoverOrRestart(url);
+                                    }
+                                });
+                            }
+                        }
                     }
                 },
                 .arg = this,
@@ -551,6 +601,7 @@ public:
     }
 
     void Pause() override {
+        paused_ = true;
         if (player_) {
             esp_audio_simple_player_pause(player_);
         }
@@ -560,6 +611,8 @@ public:
         if (player_) {
             esp_audio_simple_player_resume(player_);
         }
+        last_pcm_us_ = esp_timer_get_time();
+        paused_ = false;
     }
 
     void SetVolume(int volume) override {
@@ -588,6 +641,43 @@ public:
     void SetPlaybackMode(PlaybackMode mode) override {}
 
 private:
+    // 失败先只重配解码器（不拆 player/pipeline）；4s 内仍无声才升级为整机重建。
+    // 调用方须在主任务上下文。
+    void RecoverOrRestart(const std::string& url) {
+        if (url.empty() || stop_requested_ || teardown_active_.load()) {
+            return;
+        }
+        if (soft_recovery_.exchange(true)) {
+            return;  // 已有一轮软恢复在等结果，避免重复重启
+        }
+        ESP_LOGW(TAG, "Audio stalled: resetting decoder before full restart");
+        RestartInPlace(url);
+        esp_timer_start_once(soft_recover_timer_, kSoftRecoverUs);
+    }
+
+    static void SoftRecoverTimerCallback(void* arg) {
+        auto* self = static_cast<RadioSourceHLS*>(arg);
+        Application::GetInstance().Schedule([self]() {
+            if (!self->soft_recovery_.exchange(false) || self->stop_requested_ ||
+                self->teardown_active_.load()) {
+                return;
+            }
+            // 已恢复出声就不再升级
+            if (self->state_ == RadioState::kPlaying &&
+                esp_timer_get_time() - self->last_pcm_us_.load() < kPcmStallUs) {
+                return;
+            }
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lock(self->url_mutex_);
+                url = self->last_url_;
+            }
+            if (!url.empty()) {
+                self->TriggerAutoRestart(url, self->state_.load());
+            }
+        });
+    }
+
     // 自动重连：固定 100ms 短延迟（对齐 RadioDroid 重试节奏）后由主任务回调
     // 统一执行重启，避免在 esp_timer task 上下文操作播放器。要求调用方在主任务
     // 上下文（如 Application::Schedule 投递的任务）内。
@@ -777,7 +867,12 @@ private:
     std::atomic<bool> expect_first_request_{false};
     std::atomic<bool> restart_pending_{false};
     esp_timer_handle_t restart_backoff_timer_ = nullptr;
+    esp_timer_handle_t soft_recover_timer_ = nullptr;
     esp_timer_handle_t buffer_log_timer_ = nullptr;
+    std::atomic<bool> is_hls_{false};
+    std::atomic<bool> paused_{false};
+    std::atomic<bool> soft_recovery_{false};
+    std::atomic<int64_t> last_pcm_us_{0};
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> mute_{false};
     std::atomic<bool> teardown_active_{false};
