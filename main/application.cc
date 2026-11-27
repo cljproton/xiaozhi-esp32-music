@@ -1972,6 +1972,7 @@ bool Application::StartEbookNow(const std::string& url, const std::string& usern
     return EbookPlayer::GetInstance().Play(url, username, password);
 }
 void Application::StopEbook() { EbookPlayer::GetInstance().Stop(); }
+bool Application::IsEbookPlaying() const { return EbookPlayer::GetInstance().IsPlaying(); }
 bool Application::EbookPause() { return EbookPlayer::GetInstance().Pause(); }
 bool Application::EbookResume() { return EbookPlayer::GetInstance().Resume(); }
 bool Application::EbookNext() { return EbookPlayer::GetInstance().Next(); }

@@ -187,6 +187,7 @@ public:
     std::shared_ptr<radio::RadioSource> GetRadioSource() const { return radio_source_; }
     void SetRadioSource(std::shared_ptr<radio::RadioSource> source) { radio_source_ = std::move(source); }
     bool IsRadioPlaying() const { return radio_playing_; }
+    bool IsEbookPlaying() const;
     std::string GetPlaybackTitle() const;
     void SetRadioPlaying(bool playing);
     // 外部音源（电台/音乐/电子书）播放期间禁止降 WiFi 节能等级

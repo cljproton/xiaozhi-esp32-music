@@ -27,7 +27,6 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
       <a href="/book">📖 电子书</a>
       <a href="/config">⚙️ 配置</a>
       <span class="badge" id="badge">待机</span>
-      <button id="btn-lang" class="lang-btn" type="button">EN</button>
     </nav>
   </header>
 
@@ -127,7 +126,7 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
 </head>
 <body>
 <div class="app">
-  <div class="top-nav"><a href="/music">🎵 音乐</a><a href="/radio">📻 电台</a><a href="/config">⚙️ 配置</a></div>
+  <div class="top-nav"><a href="/music">🎵 音乐</a><a href="/radio">📻 电台</a><a href="/book">📖 电子书</a><a href="/config">⚙️ 配置</a></div>
   <header><h1 id="welcome">欢迎使用小智</h1></header>
   <p id="intro">这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。</p>
   <div class="cards">
@@ -169,9 +168,6 @@ header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.5px;
 .badge { font-size: 0.72rem; color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 999px;
         padding: 3px 10px; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(6px); }
 .badge.on { color: #22d3ee; border-color: rgba(34, 211, 238, 0.55); box-shadow: 0 0 12px rgba(34, 211, 238, 0.25); }
-.lang-btn { min-width: 40px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.4);
-           background: rgba(15, 23, 42, 0.7); color: #e6edf7; font-size: 0.8rem; }
-.lang-btn:active { background: rgba(34, 211, 238, 0.2); }
 .card { background: rgba(15, 23, 42, 0.66); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px;
        padding: 12px; margin-bottom: 12px; box-shadow: 0 10px 30px rgba(2, 6, 23, 0.55),
                   inset 0 1px 0 rgba(255, 255, 255, 0.04); backdrop-filter: blur(12px); }
@@ -276,7 +272,6 @@ const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
 function applyLang() {
   lang = localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'zh';
   document.documentElement.lang = lang;
-  $('btn-lang').textContent = lang === 'zh' ? '中' : 'EN';
   document.querySelectorAll('[data-i18n]').forEach((el) => {
     const v = (I18N[lang] || I18N.en)[el.getAttribute('data-i18n')];
     if (v) el.textContent = v;
@@ -285,7 +280,6 @@ function applyLang() {
   renderStatus(playing);
 }
 
-$('btn-lang').addEventListener('click', () => { location.href = '/config'; });
 window.addEventListener('storage', (e) => { if (e.key === LANG_KEY) applyLang(); });
 applyLang();
 

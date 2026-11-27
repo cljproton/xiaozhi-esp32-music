@@ -13,7 +13,6 @@ nav{display:flex;align-items:center;gap:8px}
 nav a{color:var(--dim);text-decoration:none;font-size:13px}
 nav a:hover{color:var(--acc)}
 h1{font-size:18px}
-#lang{background:var(--card);border:1px solid var(--line);color:var(--dim);border-radius:8px;padding:4px 10px;cursor:pointer}
 #status{position:fixed;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;font-size:14px;z-index:20}
 .status-row{display:flex;align-items:center;gap:8px}
 #status-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -64,7 +63,7 @@ textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(
 </style>
 </head>
 <body>
-<header><h1 id="t-title">电台管理</h1><nav><a href="/">首页</a><a href="/music">音乐</a><a href="/config">⚙️ 配置</a><button id="lang" class="ghost">EN</button></nav></header>
+<header><h1 id="t-title">电台管理</h1><nav><a href="/">首页</a><a href="/music">音乐</a><a href="/book">📖 电子书</a><a href="/config">⚙️ 配置</a></nav></header>
 <a class="banner" href="https://fn.9418666.xyz" target="_blank" rel="noopener">
   <span class="banner-title">FinNav</span>
   <span class="banner-desc">打开更广阔的格局</span>
@@ -115,8 +114,8 @@ textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(
 <script>
 "use strict";
 const I18N = {
-  zh: {title:"电台管理",search:"搜索电台（radio-browser.info）",keyword:"关键词，如 BBC、新闻台",tag:"分类",country:"国家",lang:"语言",searchBtn:"\uD83D\uDD0D 搜索",reset:"重置",my:"我的电台",play:"播放",add:"添加",del:"删除",edit:"编辑",mirrors:"API 镜像",mirrorsHint:"请到radio-browser获取本地区的API",empty:"暂无电台，去上面搜索添加吧",none:"无结果",searching:"搜索中...",saving:"保存中...",stPlaying:"正在播放",stStopped:"空闲",stConnecting:"连接中",stBuffering:"缓冲中",stError:"错误",wait:"等待语音播报结束...",stop:"停止",vol:"音量",gain:"增益",gainHint:"100% 为默认；音量偏小的电台可适当调大",langBtn:"EN",prev:"上一页",next:"下一页",up:"上",down:"下",top:"置顶",errNoMirror:"尚未配置 API 镜像：请展开下方「API 镜像」，填入 radio-browser 的 API 地址并保存，然后再搜索",errMirrorUnreachable:"API 镜像无法连接：请检查网络，或在下方「API 镜像」里更换地址后点「校验」",errNetwork:"网络异常，暂时无法访问 API 镜像，请稍后重试",errUnknown:"操作失败，请稍后重试",validating:"校验中...",mirrorOk:"可用",mirrorFail:"不可用",loadFail:"（加载失败）",addcustom:"添加自定义电台",addcustomHint:"从 radio-browser 搜索添加的电台 URL 为只读；自定义电台可随时编辑。",cfName:"电台名称（必填）",cfUrl:"播放 URL（必填，http/https）",cfGenre:"分类（可选）",cfCountry:"国家（可选）",btnAddCustom:"\u2795 添加电台",errNameUrl:"名称和 URL 必填，且 URL 需以 http:// 或 https:// 开头"},
-  en: {title:"Radio Stations",search:"Search stations (radio-browser.info)",keyword:"Keyword, e.g. BBC, news",tag:"Tag",country:"Country",lang:"Language",searchBtn:"\uD83D\uDD0D Search",reset:"Reset",my:"My Stations",play:"Play",add:"Add",del:"Del",edit:"Edit",mirrors:"API Mirrors",mirrorsHint:"One mirror host per line, e.g. all.api.radio-browser.info; saved on the device.",empty:"No stations yet - search above to add some",none:"No results",searching:"Searching...",saving:"Saving...",stPlaying:"Playing",stStopped:"Idle",stConnecting:"Connecting",stBuffering:"Buffering",stError:"Error",wait:"Waiting for speech to finish...",stop:"Stop",vol:"Volume",gain:"Gain",gainHint:"100% is normal; raise it for quiet stations",langBtn:"中文",prev:"Prev",next:"Next",up:"Up",down:"Down",top:"Top",errNoMirror:"No API mirror yet: open \"API Mirrors\" below, add a radio-browser API host, save, then search again",errMirrorUnreachable:"API mirror unreachable: check your network or replace the mirror below",errNetwork:"Network error: cannot reach the API mirror, please try again",errUnknown:"Operation failed, please try again",validating:"Checking...",mirrorOk:"ok",mirrorFail:"failed",loadFail:" (load failed)",addcustom:"Add Custom Station",addcustomHint:"Stations found via radio-browser have a read-only URL; custom stations can be edited anytime.",cfName:"Station name (required)",cfUrl:"Stream URL (required, http/https)",cfGenre:"Genre (optional)",cfCountry:"Country (optional)",btnAddCustom:"\u2795 Add Station",errNameUrl:"Name and URL are required, URL must start with http:// or https://"}
+  zh: {title:"电台管理",search:"搜索电台（radio-browser.info）",keyword:"关键词，如 BBC、新闻台",tag:"分类",country:"国家",lang:"语言",searchBtn:"\uD83D\uDD0D 搜索",reset:"重置",my:"我的电台",play:"播放",add:"添加",del:"删除",edit:"编辑",mirrors:"API 镜像",mirrorsHint:"请到radio-browser获取本地区的API",empty:"暂无电台，去上面搜索添加吧",none:"无结果",searching:"搜索中...",saving:"保存中...",stPlaying:"正在播放",stStopped:"空闲",stConnecting:"连接中",stBuffering:"缓冲中",stError:"错误",wait:"等待语音播报结束...",stop:"停止",vol:"音量",gain:"增益",gainHint:"100% 为默认；音量偏小的电台可适当调大",prev:"上一页",next:"下一页",up:"上",down:"下",top:"置顶",errNoMirror:"尚未配置 API 镜像：请展开下方「API 镜像」，填入 radio-browser 的 API 地址并保存，然后再搜索",errMirrorUnreachable:"API 镜像无法连接：请检查网络，或在下方「API 镜像」里更换地址后点「校验」",errNetwork:"网络异常，暂时无法访问 API 镜像，请稍后重试",errUnknown:"操作失败，请稍后重试",validating:"校验中...",mirrorOk:"可用",mirrorFail:"不可用",loadFail:"（加载失败）",addcustom:"添加自定义电台",addcustomHint:"从 radio-browser 搜索添加的电台 URL 为只读；自定义电台可随时编辑。",cfName:"电台名称（必填）",cfUrl:"播放 URL（必填，http/https）",cfGenre:"分类（可选）",cfCountry:"国家（可选）",btnAddCustom:"\u2795 添加电台",errNameUrl:"名称和 URL 必填，且 URL 需以 http:// 或 https:// 开头"},
+  en: {title:"Radio Stations",search:"Search stations (radio-browser.info)",keyword:"Keyword, e.g. BBC, news",tag:"Tag",country:"Country",lang:"Language",searchBtn:"\uD83D\uDD0D Search",reset:"Reset",my:"My Stations",play:"Play",add:"Add",del:"Del",edit:"Edit",mirrors:"API Mirrors",mirrorsHint:"One mirror host per line, e.g. all.api.radio-browser.info; saved on the device.",empty:"No stations yet - search above to add some",none:"No results",searching:"Searching...",saving:"Saving...",stPlaying:"Playing",stStopped:"Idle",stConnecting:"Connecting",stBuffering:"Buffering",stError:"Error",wait:"Waiting for speech to finish...",stop:"Stop",vol:"Volume",gain:"Gain",gainHint:"100% is normal; raise it for quiet stations",prev:"Prev",next:"Next",up:"Up",down:"Down",top:"Top",errNoMirror:"No API mirror yet: open \"API Mirrors\" below, add a radio-browser API host, save, then search again",errMirrorUnreachable:"API mirror unreachable: check your network or replace the mirror below",errNetwork:"Network error: cannot reach the API mirror, please try again",errUnknown:"Operation failed, please try again",validating:"Checking...",mirrorOk:"ok",mirrorFail:"failed",loadFail:" (load failed)",addcustom:"Add Custom Station",addcustomHint:"Stations found via radio-browser have a read-only URL; custom stations can be edited anytime.",cfName:"Station name (required)",cfUrl:"Stream URL (required, http/https)",cfGenre:"Genre (optional)",cfCountry:"Country (optional)",btnAddCustom:"\u2795 Add Station",errNameUrl:"Name and URL are required, URL must start with http:// or https://"}
 };
 let lang = localStorage.getItem("lang")==="en" ? "en" : "zh";
 const T = () => I18N[lang];
@@ -139,7 +138,6 @@ function applyLang(){
   document.getElementById("btn-save-mirrors").textContent = "\uD83D\uDCBE " + (lang==="zh"?"保存":"Save");
   document.getElementById("q").placeholder = T().keyword;
   FILTERS.forEach(f => setPlaceholder(f.id));
-  document.getElementById("lang").textContent = lang==="zh" ? "中" : "EN";
   document.getElementById("t-stop").textContent = T().stop;
   document.getElementById("t-vol").textContent = T().vol;
   document.getElementById("btn-rv-prev").textContent = T().prev;
@@ -478,7 +476,6 @@ loadMirrors();
 renderMine();
 
 /* ---------- language is set globally on /config ---------- */
-document.getElementById("lang").onclick = () => { location.href = "/config"; };
 window.addEventListener("storage", (e) => {
   if (e.key === "lang") { lang = e.newValue==="en" ? "en" : "zh"; applyLang(); }
 });

@@ -115,6 +115,15 @@ private:
                 app.Schedule([]() { Application::GetInstance().StopRadio(); });
                 return;
             }
+            // 电子书播放/暂停中按一下停读并保留进度，保持待机而不打开 AI 对话
+            if (app.IsEbookPlaying()) {
+                app.Schedule([]() {
+                    auto& app = Application::GetInstance();
+                    app.StopEbook();
+                    app.SetDeviceState(kDeviceStateIdle);
+                });
+                return;
+            }
             // 播放中按一下暂停（会话保留）；已暂停时再按一下打开 AI 对话，
             // 暂停的音乐会话保留，对话结束后可由 AI 侧 self.music.resume 恢复。
             if (app.GetDeviceState() == kDeviceStateNotifying) {

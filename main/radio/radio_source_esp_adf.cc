@@ -64,7 +64,9 @@ size_t SelectHlsBufferSize() {
     constexpr size_t kHi = 2 * 1024 * 1024;
     constexpr size_t kMid = 1 * 1024 * 1024;
     constexpr size_t kLo = 512 * 1024;
-    constexpr size_t kHeadroom = 320 * 1024;  // preroll + decoder scratch
+    // 起播到 data bus 创建之间还会有解码器/任务栈等分配；留足一整个 IO 环的
+    // 余量，否则选出的 1MB 在真正申请时已无连续块（Memory exhausted）。
+    constexpr size_t kHeadroom = 1 * 1024 * 1024;
     size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
     if (largest >= kHi + kHeadroom) return kHi;
     if (largest >= kMid + kHeadroom) return kMid;
@@ -259,9 +261,12 @@ public:
             http_cfg.dir = ESP_GMF_IO_DIR_READER;
             http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
             http_cfg.user_data = this;
-            // 默认环只有 20KB，64kbps 直连流仅能扛 2.5s 抖动；扩到 1MB
-            // （HLS 的 playlist/分片请求也走此 IO，另有独立的 2MB HLS 环）。
-            http_cfg.io_cfg.buffer_cfg.buffer_size = 1 * 1024 * 1024;
+            // 默认环只有 20KB，64kbps 直连流仅能扛 2.5s 抖动；扩到 1MB。
+            // HLS 的 playlist/分片由 HLS IO 自带的 fetcher 拉取，不用这个 IO；
+            // 若也给它 1MB，两份连续块在长电子书后拿不到，HLS data bus
+            // 创建即失败（Memory exhausted），所以 HLS 场景保留默认 20KB。
+            http_cfg.io_cfg.buffer_cfg.buffer_size =
+                is_hls_ ? HTTP_STREAM_RINGBUFFER_SIZE : 1 * 1024 * 1024;
             // 网络侧任务固定 core 0（与 WiFi 协议栈同核），解码/输出在 core 1。
             http_cfg.io_cfg.thread.core = 0;
             // 每次建立连接（含服务器断开后的静默重连）都会回调 PRE_REQUEST。
@@ -363,11 +368,12 @@ public:
         }
         esp_audio_simple_player_register_io(player_, hls_io_);
 
-        ESP_LOGI(TAG, "Buffer %u KB, preroll %u ms, internal free %u KB, PSRAM free %u KB",
+        ESP_LOGI(TAG, "Buffer %u KB, preroll %u ms, internal free %u KB, PSRAM free %u KB, largest %u KB",
                  (unsigned)(hls_cfg.io_cfg.buffer_cfg.buffer_size / 1024),
                  (unsigned)(prebuffer_target_ * 1000 / 24000),
                  (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
-                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                 (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
 
         esp_audio_simple_player_set_event(player_, [](esp_asp_event_pkt_t* pkt, void* ctx) -> int {
             auto* self = static_cast<RadioSourceHLS*>(ctx);
