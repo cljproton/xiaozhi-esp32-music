@@ -16,12 +16,13 @@
 
 ## 最近の更新
 
-- 本プロジェクトはESP-IDF v6.0.1以降を必須とし、推奨SDKは[ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1)ブランチです。ESP-IDF 5.xはサポートしません。現在のマトリクスは171バリアントで、ESP32-S31バリアントにはIDF 6.1以降が必要です。
+- 本プロジェクトはESP-IDF v6.0.1以降を必須とし、推奨SDKは[ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1)ブランチです。ESP-IDF 5.xはサポートしません。現在のマトリクスは197バリアントで、ESP32-S31バリアントにはIDF 6.1以降が必要です。
 - MQTTとBluFiの暗号処理をPSA Cryptoへ移行し、IDF 6のコンポーネント分割およびサードパーティ依存関係にも対応しました。
 - オーディオパイプラインの並行処理、MQTT/UDPパケット検証、リリースマトリクス選択処理を強化しました。
 - ESP-SR 2.4.7を使用すると、ESP32-P4 Rev1とRev3の両方がIDF 6に対応します。
-- WebDAVミュージックプレイヤーとネットワークラジオを追加しました。WebUIはホーム(`/`)、音楽(`/music`)、ラジオ(`/radio`)の3ページ構成で、共通のCookieログイン(`/login`)と統一API `/api/auth` を使用します。ホームでパスワード変更もできます。音源フォームではOpenList経由でFTP・SFTP・SMB・オブジェクトストレージを利用するよう案内します。詳細は[WebDAV Music Player](docs/music-player.md)を参照してください。
+- WebDAVミュージックプレイヤーとネットワークラジオを追加しました。WebUIはホーム(`/`)、音楽(`/music`)、ラジオ(`/radio`)、電子書籍(`/book`)の4ページ構成で、共通のCookieログイン(`/login`)と統一API `/api/auth` を使用します。パスワード変更は設定ページ(`/config`)で行います。音源フォームではOpenList経由でFTP・SFTP・SMB・オブジェクトストレージを利用するよう案内します。詳細は[WebDAV Music Player](docs/music-player.md)を参照してください。
 - Wi-Fiは同じSSIDの複数APから最も強い信号を選び、Espressifのローミングアプリで能動的に切り替えます。ラジオ再生には断線時の再接続とバッファ監視を追加しました。
+- WebDAVのTXT電子書籍読み上げを追加しました。書籍一覧はページ分割され、進捗はNVSに保存されます。TTSはEdge TTSとHTTPエンドポイントを切り替えられます。対応ボードではBOOTボタンで読み上げを停止できます。
 
 ### 実装済み機能
 
@@ -32,7 +33,7 @@
 - 話者認識、現在話している人を識別 [3D Speaker](https://github.com/modelscope/3D-Speaker)
 - OLED / LCDディスプレイで絵文字や豊かな感情表現を表示し、一部のボードではカメラによる視覚入力にも対応
 - バッテリー表示と電源管理
-- 38言語の画面表示に対応し、音声プロンプトはローカライズ済みリソースを優先して、未収録時は英語へフォールバック
+- 41言語の画面表示に対応し、音声プロンプトはローカライズ済みリソースを優先して、未収録時は英語へフォールバック
 - ESP32、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-S3、ESP32-P4チッププラットフォーム
 - ホットスポットまたはBluFiによるWi-Fiプロビジョニング
 - デバイス側MCPによるデバイス制御（音量・明るさ調整、アクション制御など）
@@ -40,6 +41,7 @@
 - カスタマイズ可能なウェイクワード、フォント、絵文字、チャット背景、オンラインWeb編集に対応 ([カスタムアセットジェネレーター](https://github.com/78/xiaozhi-assets-generator))
 - WebDAV音源からリモート音楽を再生。WebプレイヤーとAIツールが再生セッションを共有し、ページ分割された曲一覧、検索、順番/ランダム再生、一時停止と再開、シークに対応。OpenListを使うとFTP・SFTP・SMB・オブジェクトストレージもWebDAVとして公開できます
 - ネットワークラジオ：WebUIでの検索・お気に入り、音声での選局、HLSおよびHTTP/ICYストリーム再生、断線時の自動再接続に対応
+- 電子書籍：WebDAVのTXTファイルをページ単位で一覧表示し、前回の位置から再開できます。TTSはEdge TTSかHTTPインターフェースを選択できます
 - Wi-Fiは同じSSIDのAPから最も強い信号を自動選択し、能動的にローミングします
 
 ### UI Preview
@@ -64,7 +66,7 @@
 
 ![ブレッドボードデモ](docs/v1/wiring2.jpg)
 
-### 138のボードディレクトリと171のリリースバリアントに対応（一部のみ表示）
+### 168のボードディレクトリと197のリリースバリアントに対応（一部のみ表示）
 
 - <a href="https://oshwhub.com/li-chuang-kai-fa-ban/li-chuang-shi-zhan-pai-esp32-s3-kai-fa-ban" target="_blank" title="立創・実戦派 ESP32-S3 開発ボード">立創・実戦派 ESP32-S3 開発ボード</a>
 - <a href="https://github.com/espressif/esp-box" target="_blank" title="楽鑫 ESP32-S3-BOX-3">楽鑫 ESP32-S3-BOX-3</a>
@@ -128,6 +130,18 @@
 
 👉 [初心者向けファームウェア書き込みガイド（英語）](https://docs.xiaozhi.me/en/firmware/flashing.html)
 
+### クイックスタート：書き込みから日常利用まで
+
+1. 上のガイドに従ってファームウェアを書き込み、電源を入れます。開発環境は不要です。
+2. ホットスポットまたはBluFiでWi-Fiに接続します。手順は[利用ドキュメント](https://docs.xiaozhi.me/)を参照してください。
+3. [xiaozhi.me コンソール](https://xiaozhi.me/)でデバイスを紐付けます。紐付けない場合、Web画面は使えますが音声対話はできません。
+4. ルーターの接続機器一覧か、シリアルログのIP表示でデバイスアドレスを確認します。
+5. 同じネットワークのブラウザで `http://<デバイスIP>/login` を開きます。初期パスワードは `xiaozhi` です。初回ログイン後は設定ページ(`/config`)で変更してください。
+6. ホームページには4つの入口があります。音楽プレイヤー(`/music`)、ネットワークラジオ(`/radio`)、電子書籍(`/book`)、設定(`/config`)です。
+7. 電子書籍ページでWebDAVディレクトリとTXTファイルを選び、TTS方式を指定します。Edge TTSはインターネット接続が必要です。HTTP方式はOpenAI互換の `/v1/audio/speech` エンドポイントを指定できます。進捗は保存され、次回は続きから再生できます。
+
+BOOTボタンに対応したボードでは、短押しで電子書籍またはラジオの再生を停止し、待機状態に戻せます。
+
 ### 開発環境
 
 - Cursor または VSCode
@@ -146,7 +160,6 @@
 - [詳細なWebSocket通信プロトコルドキュメント](docs/websocket.md)
 - [WebDAV Music Player：音源設定、Web API、AIツール、再生処理](docs/music-player.md)
 - [ネットワークラジオ：局管理、音声選局、HLS再生と再接続](docs/radio.md)
-- [WebDAV Music Player：音源設定、Web API、AIツール、再生処理](docs/music-player.md)
 
 ## 大規模モデル設定
 

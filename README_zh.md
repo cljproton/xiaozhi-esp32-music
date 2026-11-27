@@ -16,12 +16,13 @@
 
 ## 近期更新
 
-- 项目现在要求 ESP-IDF v6.0.1 或以上版本，推荐使用 [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) 分支。不再支持 ESP-IDF 5.x。当前矩阵包含 171 个变体，其中 ESP32-S31 变体需要 IDF 6.1 或以上版本。
+- 项目现在要求 ESP-IDF v6.0.1 或以上版本，推荐使用 [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) 分支。不再支持 ESP-IDF 5.x。当前矩阵包含 197 个变体，其中 ESP32-S31 变体需要 IDF 6.1 或以上版本。
 - MQTT 和 BluFi 加密已迁移到 PSA Crypto，同时完成了 IDF 6 组件拆分及第三方依赖兼容处理。
 - 加固了音频流水线并发、MQTT/UDP 数据包校验和发布矩阵选择逻辑。
 - 使用 ESP-SR 2.4.7 时，ESP32-P4 Rev1 和 Rev3 均支持 IDF 6。
-- 新增 WebDAV 音乐播放器与网络电台：网页端有独立首页（`/`）、音乐页（`/music`）和电台页（`/radio`），共用一个 Cookie 登录页（`/login`）和统一鉴权接口 `/api/auth`，首页可修改密码。播放模式和选中音源保存在 NVS 中。音源管理页提示用 OpenList 接入 FTP、SFTP、SMB、对象存储等网盘。详见 [WebDAV 音乐播放器](docs/music-player_zh.md)。
+- 新增 WebDAV 音乐播放器与网络电台：网页端有独立首页（`/`）、音乐页（`/music`）、电台页（`/radio`）和电子书页（`/book`），共用一个 Cookie 登录页（`/login`）和统一鉴权接口 `/api/auth`。密码在配置页（`/config`）修改。播放模式和选中音源保存在 NVS 中。音源管理页提示用 OpenList 接入 FTP、SFTP、SMB、对象存储等网盘。详见 [WebDAV 音乐播放器](docs/music-player_zh.md)。
 - 网络优化：同名多 AP 启动时连接信号最强的节点，并启用 ESP-IDF 漫游 App 主动切换；电台播放加入断流重连和缓冲看门狗。
+- 新增 WebDAV TXT 电子书朗读：书目分页显示，进度写入 NVS 可续播；TTS 可在 Edge TTS 与自定义 HTTP 接口之间切换；支持该按键的板子短按 BOOT 可停止朗读并返回待机。
 
 ### 已实现功能
 
@@ -32,7 +33,7 @@
 - 声纹识别，识别当前说话人的身份 [3D Speaker](https://github.com/modelscope/3D-Speaker)
 - OLED / LCD 显示屏，支持表情和丰富的情绪呈现；部分硬件支持摄像头视觉输入
 - 电量显示与电源管理
-- 提供 38 种界面语言；语音提示优先使用本地化资源，缺失时自动回退到英文
+- 提供 41 种界面语言；语音提示优先使用本地化资源，缺失时自动回退到英文
 - 支持 ESP32、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-S3、ESP32-P4 芯片平台
 - 支持热点和 BluFi 两种 Wi-Fi 配网方式
 - 通过设备端 MCP 实现设备控制（音量、灯光、电机、GPIO 等）
@@ -40,6 +41,7 @@
 - 自定义唤醒词、字体、表情与聊天背景，支持网页端在线修改 ([自定义Assets生成器](https://github.com/78/xiaozhi-assets-generator))
 - 从 WebDAV 音源播放远程音乐，网页播放器与 AI 工具共用播放会话；支持分页曲目列表、搜索、随机/顺序播放、暂停恢复和进度跳转；OpenList 可把 FTP、SFTP、SMB、对象存储等协议统一暴露为 WebDAV
 - 网络电台：网页搜索与收藏电台、AI 语音选台，支持 HLS 和直连 HTTP/ICY 流，断流自动重连
+- 电子书朗读：分页浏览 WebDAV 中的 TXT 书目，按上次进度续播；TTS 可选 Edge TTS 或 HTTP 接口；支持该按键的板子按 BOOT 可停止朗读
 - Wi-Fi 支持同名多 AP 自动选择信号最强节点并主动漫游
 
 ### 界面预览
@@ -64,7 +66,7 @@
 
 ![面包板效果图](docs/v1/wiring2.jpg)
 
-### 支持 138 个板卡目录、171 个固件发布变体（仅展示部分）
+### 支持 168 个板卡目录、197 个固件发布变体（仅展示部分）
 
 - <a href="https://oshwhub.com/li-chuang-kai-fa-ban/li-chuang-shi-zhan-pai-esp32-s3-kai-fa-ban" target="_blank" title="立创·实战派 ESP32-S3 开发板">立创·实战派 ESP32-S3 开发板</a>
 - <a href="https://github.com/espressif/esp-box" target="_blank" title="乐鑫 ESP32-S3-BOX-3">乐鑫 ESP32-S3-BOX-3</a>
@@ -127,6 +129,18 @@
 固件默认接入 [xiaozhi.me](https://xiaozhi.me) 官方服务器，个人用户注册账号可以免费使用 Qwen 实时模型。
 
 👉 [新手烧录固件教程](https://docs.xiaozhi.me/zh/firmware/flashing.html)
+
+### 新手快速上手：从刷机到日常使用
+
+1. 先按上面的教程烧录固件并上电。这一步不需要搭建开发环境。
+2. 让设备进入配网模式并连上家里的 Wi-Fi，可以用热点或 BluFi 配网，具体步骤见[使用文档](https://docs.xiaozhi.me/zh/)。
+3. 在 [xiaozhi.me 控制台](https://xiaozhi.me/)绑定设备，否则只能使用网页功能，不能语音对话。
+4. 在路由器客户端列表或串口日志的 IP 分配信息里找到设备地址。
+5. 浏览器打开 `http://<设备IP>/login`，默认密码是 `xiaozhi`。首次登录后请到配置页（`/config`）修改密码。
+6. 首页有四个入口：**音乐播放器**（`/music`）管理 WebDAV 音源，**网络电台**（`/radio`）搜索和收藏电台，**电子书朗读**（`/book`）播放 WebDAV 里的 TXT 文件，**配置**（`/config`）修改密码、语言、睡眠定时和网络设置。
+7. 在电子书页保存 WebDAV 目录、选择 TXT 文件和 TTS 方案。Edge TTS 需要联网；HTTP 方案可以填任意兼容 OpenAI `/v1/audio/speech` 的接口。朗读进度会保存，下次播放从上次位置继续。
+
+支持 BOOT 键控制的板子短按一下会停止当前的电子书或电台播放，并回到待机状态。
 
 ### 开发环境
 

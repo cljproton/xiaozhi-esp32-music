@@ -16,13 +16,13 @@ As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabiliti
 
 ## Recent Updates
 
-- The project now requires ESP-IDF v6.0.1 or later. [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) is the recommended SDK branch. ESP-IDF 5.x is no longer supported. The current matrix contains 171 variants; ESP32-S31 builds require IDF 6.1 or later.
+- The project now requires ESP-IDF v6.0.1 or later. [ESP-IDF `release/v6.1`](https://github.com/espressif/esp-idf/tree/release/v6.1) is the recommended SDK branch. ESP-IDF 5.x is no longer supported. The current matrix contains 197 variants; ESP32-S31 builds require IDF 6.1 or later.
 - MQTT and BluFi cryptographic code has migrated to PSA Crypto. IDF 6 component splits and third-party dependency compatibility have also been addressed.
 - Audio pipeline concurrency, MQTT/UDP packet validation, and release-matrix selection have been hardened.
 - ESP32-P4 Rev1 and Rev3 are both supported on IDF 6 with ESP-SR 2.4.7.
-- Added a WebDAV music player and internet radio: the web UI has a home page (`/`), a music page (`/music`) and a radio page (`/radio`), sharing one cookie-based login page (`/login`) and a unified `/api/auth` endpoint. The home page also changes the password. The source form recommends OpenList for FTP, SFTP, SMB and object storage. See [WebDAV Music Player](docs/music-player.md).
+- Added a WebDAV music player and internet radio: the web UI has a home page (`/`), a music page (`/music`), a radio page (`/radio`) and an e-book page (`/book`), sharing one cookie-based login page (`/login`) and a unified `/api/auth` endpoint. The password is changed on the configuration page (`/config`). The source form recommends OpenList for FTP, SFTP, SMB and object storage. See [WebDAV Music Player](docs/music-player.md).
 - Wi-Fi now picks the strongest AP among same-SSID networks and enables Espressif's roaming app for active switching; radio playback adds stream reconnection and a buffering watchdog.
-- Added a WebDAV music player: the web UI manages sources, lists tracks page by page, and controls playback and seeking. AI uses the `self.music.*` tools against the same session. Playback mode and the selected source are saved in NVS. See [WebDAV Music Player](docs/music-player.md).
+- Added WebDAV TXT e-book reading. The book list is paginated, progress is saved in NVS, and the TTS provider can be switched between Edge TTS and a configurable HTTP endpoint. The BOOT button stops reading and returns to idle.
 
 ### Features Implemented
 
@@ -33,7 +33,7 @@ As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabiliti
 - Speaker recognition, identifies the current speaker [3D Speaker](https://github.com/modelscope/3D-Speaker)
 - OLED / LCD displays with emoji and rich expression support, plus camera vision input on supported boards
 - Battery display and power management
-- 39 interface languages, with localized voice prompts where available and English fallback
+- 41 interface languages, with localized voice prompts where available and English fallback
 - ESP32, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-S3, and ESP32-P4 chip platforms
 - Wi-Fi provisioning through hotspot or BluFi
 - Device-side MCP for device control (Speaker, LED, Servo, GPIO, etc.)
@@ -41,6 +41,7 @@ As a voice interaction entry, the XiaoZhi AI chatbot leverages the AI capabiliti
 - Customizable wake words, fonts, emojis, and chat backgrounds with online web-based editing ([Custom Assets Generator](https://github.com/78/xiaozhi-assets-generator))
 - Play remote music from WebDAV sources. The web player and AI tools share one playback session, with paginated track lists, search, sequential/shuffle modes, pause and resume, and progress seeking. OpenList can expose FTP, SFTP, SMB and object storage as WebDAV
 - Internet radio: search and save stations from the web UI, select them by voice, play HLS or direct HTTP/ICY streams, and reconnect automatically after stream drops
+- E-book reading: browse WebDAV TXT books page by page, resume from the last position, and choose Edge TTS or an HTTP TTS endpoint; the BOOT button stops playback
 - Wi-Fi automatically prefers the strongest AP among networks with the same SSID and roams proactively
 
 ### UI Preview
@@ -65,7 +66,7 @@ Breadboard demo:
 
 ![Breadboard Demo](docs/v1/wiring2.jpg)
 
-### Supports 138 Board Directories and 171 Release Variants (Partial List)
+### Supports 168 Board Directories and 197 Release Variants (Partial List)
 
 - <a href="https://oshwhub.com/li-chuang-kai-fa-ban/li-chuang-shi-zhan-pai-esp32-s3-kai-fa-ban" target="_blank" title="LiChuang ESP32-S3 Development Board">LiChuang ESP32-S3 Development Board</a>
 - <a href="https://github.com/espressif/esp-box" target="_blank" title="Espressif ESP32-S3-BOX-3">Espressif ESP32-S3-BOX-3</a>
@@ -129,6 +130,18 @@ The firmware connects to the official [xiaozhi.me](https://xiaozhi.me) server by
 
 👉 [Beginner's Firmware Flashing Guide](https://docs.xiaozhi.me/en/firmware/flashing.html)
 
+### Quick Start: From a Flashed Device to Daily Use
+
+1. Flash a prebuilt image and power on the board. Follow the flashing guide above; you do not need a development environment for this step.
+2. Put the device into Wi-Fi provisioning mode and connect it to your network. Use the hotspot or BluFi flow described in the [guide](https://docs.xiaozhi.me/en/).
+3. Bind the device in the [xiaozhi.me console](https://xiaozhi.me/) so voice chat works. Without binding, the device can still use its web pages, but it will not answer voice requests.
+4. Find the device IP in your router's client list or in the serial log line that reports the obtained IP address.
+5. Open `http://<device-ip>/login` in a browser on the same network. The default password is `xiaozhi`. Change it on the configuration page (`/config`) after the first login.
+6. The home page links to four tools: **Music Player** (`/music`) for WebDAV audio, **Internet Radio** (`/radio`) for station search and playback, **E-book** (`/book`) for WebDAV TXT files, and **Settings** (`/config`) for password, language, sleep timer and network settings.
+7. In `/book`, save a WebDAV directory, pick a TXT file, and choose the TTS provider. Edge TTS needs internet access; the HTTP option accepts any OpenAI-compatible `/v1/audio/speech` endpoint. Progress is saved, so the next play resumes where you stopped.
+
+On boards that implement the BOOT-button playback control, a short press stops the current e-book or radio stream and returns the device to idle.
+
 ### Development Environment
 
 - Cursor or VSCode
@@ -148,7 +161,6 @@ Use the `release/v6.1` branch rather than the `v6.1` release tag: an ESP32-C3 Wi
 - [A detailed WebSocket communication protocol document](docs/websocket.md)
 - [WebDAV Music Player: source setup, web API, AI tools, and playback implementation](docs/music-player.md)
 - [Internet Radio: station management, voice selection, HLS playback and reconnection](docs/radio.md)
-- [WebDAV Music Player: source setup, web API, AI tools, and playback implementation](docs/music-player.md)
 
 ## Large Model Configuration
 
