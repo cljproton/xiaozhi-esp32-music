@@ -292,7 +292,7 @@ async function addCustom(){
 
 /* ---------- radio-browser search (browser -> API directly) ---------- */
 let mirrors = [];
-function apiBase(m){ return /^https?:\/\//.test(m) ? m : "https://" + m; }
+function apiBase(m){ const base = /^https?:\/\//.test(m) ? m : "https://" + m; return base.replace(/\/+$/, ""); }
 
 async function rbFetch(path){
   for(const m of mirrors){
@@ -448,7 +448,7 @@ function loadFilters(){
 function toggleMirrors(){ document.getElementById("mirrors-box").classList.toggle("open"); }
 async function saveMirrors(){
   const lines = document.getElementById("mirrors").value.split("\n").map(s=>s.trim()).filter(Boolean);
-  await deviceApi("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({mirrors:lines})});
+  await deviceApi("/api/radio/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({mirrors:lines})});
   mirrors = lines;
   loadFilters();
 }
@@ -466,7 +466,7 @@ async function validateMirrors(){
 }
 async function loadMirrors(){
   try{
-    const cfg = await deviceApi("/api/config");
+    const cfg = await deviceApi("/api/radio/config");
     mirrors = cfg.mirrors.length ? cfg.mirrors : mirrors;
     document.getElementById("mirrors").value = mirrors.join("\n");
     loadFilters();

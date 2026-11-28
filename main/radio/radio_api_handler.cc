@@ -434,8 +434,8 @@ static const httpd_uri_t kUris[] = {
     {"/api/stop", HTTP_POST, HandleStop, nullptr},
     {"/api/volume", HTTP_POST, HandleVolume, nullptr},
     {"/api/status", HTTP_GET, HandleStatus, nullptr},
-    {"/api/config", HTTP_GET, HandleConfigGet, nullptr},
-    {"/api/config", HTTP_PUT, HandleConfigPut, nullptr},
+    {"/api/radio/config", HTTP_GET, HandleConfigGet, nullptr},
+    {"/api/radio/config", HTTP_PUT, HandleConfigPut, nullptr},
 };
 
 std::string RadioApiHandler::GetWebPageUrl() {

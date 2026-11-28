@@ -884,6 +884,11 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
+            // AI 对话结束时音乐/电台仍在播放：保留 Notifying，否则曲目结束回调
+            // 会因状态不是 Notifying 而提前返回，播放列表只播第一首就停。
+            if (GetDeviceState() == kDeviceStateNotifying && IsExternalPlaybackActive()) {
+                return;
+            }
             SetDeviceState(kDeviceStateIdle);
         });
     });

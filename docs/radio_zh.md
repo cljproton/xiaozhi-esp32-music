@@ -42,7 +42,7 @@
 | `POST /api/stop` | 停止电台 |
 | `POST /api/volume` | 设置设备输出音量 |
 | `GET /api/status` | 播放状态、电台名、设备音量 |
-| `GET/PUT /api/config` | API 镜像列表 |
+| `GET/PUT /api/radio/config` | API 镜像列表 |
 
 ## AI 工具
 

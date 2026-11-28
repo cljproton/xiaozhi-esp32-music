@@ -42,7 +42,7 @@ Device API (all require cookie authentication):
 | `POST /api/stop` | Stop radio |
 | `POST /api/volume` | Set device output volume |
 | `GET /api/status` | Playback state, station name, device volume |
-| `GET/PUT /api/config` | API mirror list |
+| `GET/PUT /api/radio/config` | API mirror list |
 
 ## AI tools
 
