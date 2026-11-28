@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "ebook_reader.h"
 #include "text_stream.h"
@@ -31,11 +32,21 @@ public:
         bool active = false;
         bool paused = false;
         std::string book_name;
-        size_t paragraph = 0;
+        int progress = 0;     // 0-100，供 AI 工具使用
+        size_t consumed = 0;  // 已读字节，网页据此算小数百分比
         size_t total = 0;
         bool error = false;
     };
     Status GetStatus() const;
+
+    struct RecentBook {
+        std::string url;
+        std::string name;
+        int32_t time = 0;  // Unix 秒；0 = 旧记录没有时间
+    };
+    // 最近播放（最新的在前，最多 3 条）；第一本供 AI 无参续播使用。
+    static void GetRecentBooks(std::vector<RecentBook>& out);
+    static bool GetLastBook(std::string& url, std::string& name);
 
     bool PlayTest(const std::string& text, const std::string& voice, int speed);
     void PlayTestAsync(const std::string& text, const std::string& voice, int speed);
@@ -44,6 +55,8 @@ public:
 
 private:
     EbookPlayer();
+
+    static void SaveRecentBook(const std::string& url, const std::string& name);
 
     std::atomic<bool> active_{false};
     std::atomic<bool> paused_{false};
@@ -58,7 +71,7 @@ private:
     EbookBook book_;
     TextStream stream_;
     std::string book_url_;
-    size_t paragraph_ = 0;  // sentences sent so far
+    std::atomic<int> progress_{0};  // 已读百分比，合成任务写 / HTTP 任务读
     std::string username_;
     std::string password_;
     TaskHandle_t synth_task_ = nullptr;  // feeds text to TTS + reconnects

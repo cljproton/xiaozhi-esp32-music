@@ -5,6 +5,7 @@
 #include <mbedtls/base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +40,47 @@ size_t IncompleteTail(const std::string& s, bool gbk) {
     return have < need ? have : 0;
 }
 
+template <typename Http>
+void SetBasicAuth(Http& http, const std::string& user, const std::string& pass) {
+    if (user.empty())
+        return;
+    std::string cred = user + ":" + pass;
+    size_t olen = 0;
+    mbedtls_base64_encode(nullptr, 0, &olen, reinterpret_cast<const unsigned char*>(cred.data()),
+                          cred.size());
+    std::string b64(olen, '\0');
+    mbedtls_base64_encode(reinterpret_cast<unsigned char*>(&b64[0]), b64.size(), &olen,
+                          reinterpret_cast<const unsigned char*>(cred.data()), cred.size());
+    // mbedtls counts the terminating NUL; an embedded NUL breaks the header.
+    b64.resize(strlen(b64.c_str()));
+    http.SetHeader("Authorization", "Basic " + b64);
+}
+
+// WebDAV PROPFIND replies can carry <getcontentlength> even when GET ignores
+// Range and returns a chunked body without Content-Length.
+size_t ParseContentLength(const std::string& body) {
+    const char* tag = "getcontentlength";
+    constexpr size_t kTagLen = 16;
+    for (size_t i = 0; i + kTagLen <= body.size(); ++i) {
+        bool match = true;
+        for (size_t j = 0; j < kTagLen; ++j) {
+            if (tolower(static_cast<unsigned char>(body[i + j])) != tag[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (!match)
+            continue;
+        size_t gt = body.find('>', i + kTagLen);
+        if (gt == std::string::npos)
+            continue;
+        unsigned long long n = strtoull(body.c_str() + gt + 1, nullptr, 10);
+        if (n > 0)
+            return static_cast<size_t>(n);
+    }
+    return 0;
+}
+
 // Back up to the last complete UTF-8 character boundary.
 size_t Utf8Boundary(const std::string& s, size_t limit) {
     if (limit >= s.size()) return s.size();
@@ -60,6 +102,8 @@ bool TextStream::Open(const std::string& url, const std::string& username,
     username_ = username;
     password_ = password;
     file_offset_ = raw_start;
+    // 首次 Refill 前也要报出正确位置，否则 Seek 后马上停止会把进度写成 0
+    chunk_raw_start_ = raw_start;
     pos_ = 0;
     eof_ = false;
     need_convert_ = false;
@@ -70,6 +114,26 @@ bool TextStream::Open(const std::string& url, const std::string& username,
     pending_skip_ = text_skip;
     failures_ = 0;
     error_ = false;
+    // 先问文件大小：部分 WebDAV 源忽略 Range 且返回 chunked，GET 里拿不到总长
+    auto probe = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (probe) {
+        probe->SetTimeout(3000);
+        SetBasicAuth(*probe, username_, password_);
+        probe->SetHeader("Depth", "0");
+        auto opened = probe->Open("PROPFIND", url_);
+        if (opened) {
+            std::string body;
+            char tmp[512];
+            while (body.size() < 4096) {
+                auto got = probe->Read(tmp, sizeof(tmp));
+                if (!got || *got == 0)
+                    break;
+                body.append(tmp, static_cast<size_t>(*got));
+            }
+            total_bytes_ = ParseContentLength(body);
+        }
+        probe->Close();
+    }
     return true;  // actual fetch happens on first Refill
 }
 
@@ -94,19 +158,7 @@ bool TextStream::Refill() {
     auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
     if (!http) return false;
     http->SetTimeout(20000);
-    if (!username_.empty()) {
-        std::string cred = username_ + ":" + password_;
-        size_t olen = 0;
-        mbedtls_base64_encode(nullptr, 0, &olen,
-                              reinterpret_cast<const unsigned char*>(cred.data()), cred.size());
-        std::string b64(olen, '\0');
-        mbedtls_base64_encode(reinterpret_cast<unsigned char*>(b64.data()), b64.size(), &olen,
-                              reinterpret_cast<const unsigned char*>(cred.data()), cred.size());
-        // mbedtls counts the terminating NUL; a NUL inside the header makes the
-        // server reject the Range request with 400.
-        b64.resize(strlen(b64.c_str()));
-        http->SetHeader("Authorization", "Basic " + b64);
-    }
+    SetBasicAuth(*http, username_, password_);
     char hdr[64];
     snprintf(hdr, sizeof(hdr), "bytes=%u-%u", (unsigned)file_offset_,
              (unsigned)(file_offset_ + kChunkSize - 1));

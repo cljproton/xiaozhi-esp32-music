@@ -12,6 +12,7 @@
 #include <cJSON.h>
 #include <cstdio>
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -61,9 +62,25 @@ esp_err_t HandleStatus(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "active", st.active);
     cJSON_AddBoolToObject(root, "paused", st.paused);
     cJSON_AddStringToObject(root, "book", st.book_name.c_str());
-    cJSON_AddNumberToObject(root, "paragraph", st.paragraph);
-    cJSON_AddNumberToObject(root, "total", st.total);
+    cJSON_AddNumberToObject(root, "progress", st.progress);
+    cJSON_AddNumberToObject(root, "consumed", static_cast<double>(st.consumed));
+    cJSON_AddNumberToObject(root, "total", static_cast<double>(st.total));
     cJSON_AddBoolToObject(root, "error", st.error);
+    std::vector<EbookPlayer::RecentBook> recent;
+    EbookPlayer::GetRecentBooks(recent);
+    if (!recent.empty()) {
+        cJSON* items = cJSON_CreateArray();
+        for (const auto& b : recent) {
+            cJSON* item = cJSON_CreateObject();
+            cJSON_AddStringToObject(item, "url", b.url.c_str());
+            cJSON_AddStringToObject(item, "name", b.name.c_str());
+            cJSON_AddNumberToObject(item, "time", b.time);
+            cJSON_AddItemToArray(items, item);
+        }
+        cJSON_AddItemToObject(root, "recent", items);
+        cJSON_AddStringToObject(root, "last_url", recent[0].url.c_str());
+        cJSON_AddStringToObject(root, "last_name", recent[0].name.c_str());
+    }
     return SendJson(req, root);
 }
 
@@ -292,13 +309,20 @@ cJSON* ListSourceBooks(const std::string& full, const std::string& u,
             std::string file_url = origin + href;
             cJSON_AddStringToObject(item, "url", file_url.c_str());
             cJSON_AddStringToObject(item, "name", EbookDecodeName(href.substr(href.find_last_of('/') + 1)).c_str());
-            // Reading progress (paragraph index) stored by EbookPlayer.
+            // Reading progress stored by EbookPlayer: raw offset / file size.
             uint32_t h = 2166136261u;
             for (unsigned char c : file_url) { h ^= c; h *= 16777619u; }
             char key[16];
             snprintf(key, sizeof(key), "%08lx", (unsigned long)h);
             Settings prog("ebook", false);
-            cJSON_AddNumberToObject(item, "progress", prog.GetInt(key, 0));
+            int total = prog.GetInt((std::string(key) + "b").c_str(), 0);
+            int pct =
+                total > 0
+                    ? static_cast<int>(static_cast<int64_t>(prog.GetInt(key, 0)) * 100 / total)
+                    : 0;
+            if (pct > 100)
+                pct = 100;
+            cJSON_AddNumberToObject(item, "progress", pct);
             cJSON_AddItemToArray(books, item);
         }
     }

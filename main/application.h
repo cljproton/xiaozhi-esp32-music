@@ -213,6 +213,10 @@ public:
     static MusicPlayMode LoadPersistedMusicMode();
     static int LoadSelectedSource();
     static void SaveSelectedSource(int index);
+    // 按音源记住上次播放的曲目，供"播放全部"续播（NVS "music" 命名空间）
+    static int LoadLastTrack(int source_index);
+    static void SaveLastTrack(int source_index, int track_index);
+    static void ClearLastTrack(int source_index);
     MusicStatus GetMusicStatus() const;
 
     // E-book (TTS) playback

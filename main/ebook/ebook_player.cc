@@ -8,6 +8,7 @@
 #include <esp_audio_simple_dec_default.h>
 
 #include <algorithm>
+#include <ctime>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -40,12 +41,25 @@ void LoadProgress(const std::string& url, size_t& raw, size_t& text) {
     text = static_cast<size_t>(s.GetInt((k + "t").c_str(), 0));
 }
 
-void SaveProgress(const std::string& url, size_t raw, size_t text) {
+void SaveProgress(const std::string& url, size_t raw, size_t text, size_t total = 0) {
     if (url.empty()) return;
     Settings s("ebook", true);
     std::string k = BookKey(url);
     s.SetInt(k.c_str(), static_cast<int>(raw));
     s.SetInt((k + "t").c_str(), static_cast<int>(text));
+    // 列表页把已读偏移换算成百分比需要文件大小
+    if (total > 0)
+        s.SetInt((k + "b").c_str(), static_cast<int>(total));
+}
+
+constexpr const char* kLastUrlKey = "last_url";
+constexpr const char* kLastNameKey = "last_name";
+constexpr int kRecentCount = 3;
+
+std::string RecentKey(int i, char suffix) {
+    char key[8];
+    snprintf(key, sizeof(key), "r%d%c", i, suffix);
+    return key;
 }
 
 constexpr int kOutSize = 4096;
@@ -181,6 +195,60 @@ EbookPlayer& EbookPlayer::GetInstance() {
     return instance;
 }
 
+void EbookPlayer::GetRecentBooks(std::vector<RecentBook>& out) {
+    out.clear();
+    Settings s("ebook", false);
+    for (int i = 0; i < kRecentCount; ++i) {
+        std::string url = s.GetString(RecentKey(i, 'u'));
+        if (url.empty())
+            break;
+        out.push_back({url, s.GetString(RecentKey(i, 'n')), s.GetInt(RecentKey(i, 't'), 0)});
+    }
+    if (out.empty()) {
+        // 兼容还没有三条记录的旧固件
+        std::string url = s.GetString(kLastUrlKey);
+        if (!url.empty())
+            out.push_back({url, s.GetString(kLastNameKey), 0});
+    }
+}
+
+void EbookPlayer::SaveRecentBook(const std::string& url, const std::string& name) {
+    std::vector<RecentBook> books;
+    GetRecentBooks(books);
+    books.erase(std::remove_if(books.begin(), books.end(),
+                               [&url](const RecentBook& b) { return b.url == url; }),
+                books.end());
+    books.insert(books.begin(), {url, name, static_cast<int32_t>(time(nullptr))});
+    if (books.size() > kRecentCount)
+        books.resize(kRecentCount);
+
+    Settings s("ebook", true);
+    for (int i = 0; i < kRecentCount; ++i) {
+        if (i < static_cast<int>(books.size())) {
+            s.SetString(RecentKey(i, 'u'), books[i].url);
+            s.SetString(RecentKey(i, 'n'), books[i].name);
+            s.SetInt(RecentKey(i, 't'), books[i].time);
+        } else {
+            s.EraseKey(RecentKey(i, 'u'));
+            s.EraseKey(RecentKey(i, 'n'));
+            s.EraseKey(RecentKey(i, 't'));
+        }
+    }
+    // 旧字段继续写，供旧版固件和无参 AI 续播读取
+    s.SetString(kLastUrlKey, url);
+    s.SetString(kLastNameKey, name);
+}
+
+bool EbookPlayer::GetLastBook(std::string& url, std::string& name) {
+    std::vector<RecentBook> books;
+    GetRecentBooks(books);
+    if (books.empty())
+        return false;
+    url = books[0].url;
+    name = books[0].name;
+    return true;
+}
+
 EbookPlayer::EbookPlayer() = default;
 
 void EbookPlayer::KeepOutputAlive() {
@@ -207,10 +275,11 @@ bool EbookPlayer::Play(const std::string& url, const std::string& username,
         return false;
     }
     book_.name = EbookDecodeName(url.substr(url.find_last_of('/') + 1));
+    SaveRecentBook(url, book_.name);
     book_url_ = url;
     username_ = username;
     password_ = password;
-    paragraph_ = 0;
+    progress_ = 0;
     ESP_LOGI(TAG, "Streaming '%s' from chunk %u (+%u)", book_.name.c_str(),
              (unsigned)raw, (unsigned)text);
     active_ = true;
@@ -235,7 +304,7 @@ void EbookPlayer::Stop() {
     // HTTP reads and can corrupt the heap.
     stopping_ = true;
     active_ = false;
-    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition(), stream_.TotalBytes());
     // Wait until the playback task actually released the decoder and stopped
     // pushing PCM, so switching to music/radio cannot mix two sources.
     for (int i = 0; i < 250 && (synth_task_ != nullptr || play_task_ != nullptr); ++i) {
@@ -246,7 +315,7 @@ void EbookPlayer::Stop() {
 bool EbookPlayer::Pause() {
     if (!active_ || paused_) return false;
     paused_ = true;
-    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition(), stream_.TotalBytes());
     // Actually stop the tasks so the decoder/audio queue is released; Resume
     // restarts from the saved NVS position instead of continuing silently.
     stopping_ = true;
@@ -286,9 +355,10 @@ bool EbookPlayer::Seek(int percent) {
     }
     size_t offset = total * static_cast<size_t>(percent) / 100;
     if (!stream_.Open(book_url_, username_, password_, offset, 0)) return false;
-    SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+    // Open 后首个分块还没拉取，RawPosition/TotalBytes 仍是 0，必须存目标偏移
+    SaveProgress(book_url_, offset, 0, total);
     EdgeSession::GetInstance().Reset();
-    paragraph_ = static_cast<size_t>(percent) * (total / 120) / 100;
+    progress_ = percent;
     ESP_LOGI(TAG, "Seek to %d%% (raw offset %u)", percent, (unsigned)offset);
     active_ = true;
     paused_ = false;
@@ -309,8 +379,9 @@ EbookPlayer::Status EbookPlayer::GetStatus() const {
     s.active = active_;
     s.paused = paused_;
     s.book_name = book_.name;
-    s.paragraph = paragraph_;
-    s.total = stream_.TotalBytes() > 0 ? stream_.TotalBytes() / 120 : 0;
+    s.progress = progress_;
+    s.consumed = stream_.ConsumedBytes();
+    s.total = stream_.TotalBytes();
     s.error = finish_error_;
     return s;
 }
@@ -422,14 +493,16 @@ void EbookPlayer::HttpSynthesis() {
         if (!ok) {
             ESP_LOGE(TAG, "HTTP TTS gave up after %d attempts", kMaxAttempts);
             // 进度停在失败句之前，下次播放从 NVS 接着读。
-            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition(),
+                         stream_.TotalBytes());
             finish_error_ = true;
             feed_done_ = true;
             return;
         }
-        ++paragraph_;
+        progress_ = stream_.Percent();
         if (++sentences % 10 == 0) {
-            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition());
+            SaveProgress(book_url_, stream_.RawPosition(), stream_.TextPosition(),
+                         stream_.TotalBytes());
         }
     }
 }
@@ -521,10 +594,10 @@ void EbookPlayer::SynthTask(void* arg) {
                 break;
             }
             inflight.emplace_back(sentence, 1);
-            ++self->paragraph_;
+            self->progress_ = self->stream_.Percent();
             if (++sentences % 10 == 0) {
                 SaveProgress(self->book_url_, self->stream_.RawPosition(),
-                             self->stream_.TextPosition());
+                             self->stream_.TextPosition(), self->stream_.TotalBytes());
             }
         }
         if (eof && inflight.empty() && session.Idle()) {
@@ -533,7 +606,8 @@ void EbookPlayer::SynthTask(void* arg) {
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    SaveProgress(self->book_url_, self->stream_.RawPosition(), self->stream_.TextPosition());
+    SaveProgress(self->book_url_, self->stream_.RawPosition(), self->stream_.TextPosition(),
+                 self->stream_.TotalBytes());
     bail();
 }
 

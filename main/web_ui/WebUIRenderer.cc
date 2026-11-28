@@ -24,15 +24,15 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
     <nav class="top-nav">
       <a href="/" data-i18n="nav_home">首页</a>
       <a href="/radio" data-i18n="nav_radio">电台</a>
-      <a href="/book">📖 电子书</a>
-      <a href="/config">⚙️ 配置</a>
+      <a href="/book" data-i18n="nav_book">📖 电子书</a>
+      <a href="/config" data-i18n="nav_config">⚙️ 配置</a>
       <span class="badge" id="badge">待机</span>
     </nav>
   </header>
 
   <a class="banner" href="https://fn.9418666.xyz" target="_blank" rel="noopener">
     <span class="banner-title">FinNav</span>
-    <span class="banner-desc">打开更广阔的格局</span>
+    <span class="banner-desc" data-i18n="banner_desc">打开更广阔的格局</span>
   </a>
 
   <section class="card source-card">
@@ -50,10 +50,10 @@ const char* kIndexHtmlTemplate = R"HTML(<!DOCTYPE html>
       <p class="hint" id="src-hint" data-i18n="source_hint"></p>
       <form id="source-form">
         <input type="hidden" id="source-edit-index" value="-1">
-        <label>基础地址<input id="base-url" type="url" placeholder="http://192.168.1.70:15244" required></label>
-        <label>目录路径<input id="path" type="text" value="/dav" required></label>
-        <label>用户名<input id="username" type="text" autocomplete="off" required></label>
-        <label>密码<input id="password" type="password" autocomplete="off" required></label>
+        <label><span data-i18n="src_base_url">基础地址</span><input id="base-url" type="url" placeholder="http://192.168.1.70:15244" required></label>
+        <label><span data-i18n="src_dir_path">目录路径</span><input id="path" type="text" value="/dav" required></label>
+        <label><span data-i18n="src_username">用户名</span><input id="username" type="text" autocomplete="off" required></label>
+        <label><span data-i18n="src_password">密码</span><input id="password" type="password" autocomplete="off" required></label>
         <div class="row">
           <button type="submit" class="primary" id="src-add" data-i18n="source_add">添加</button>
           <button type="button" id="src-cancel" style="display:none" data-i18n="source_cancel">取消编辑</button>
@@ -126,20 +126,20 @@ p{color:var(--dim);font-size:14px;line-height:1.7;margin-bottom:18px}
 </head>
 <body>
 <div class="app">
-  <div class="top-nav"><a href="/music">🎵 音乐</a><a href="/radio">📻 电台</a><a href="/book">📖 电子书</a><a href="/config">⚙️ 配置</a></div>
-  <header><h1 id="welcome">欢迎使用小智</h1></header>
-  <p id="intro">这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。</p>
+  <div class="top-nav"><a href="/music" data-i18n="navMusic">🎵 音乐</a><a href="/radio" data-i18n="navRadio">📻 电台</a><a href="/book" data-i18n="navBook">📖 电子书</a><a href="/config" data-i18n="navConfig">⚙️ 配置</a></div>
+  <header><h1 id="welcome" data-i18n="welcome">欢迎使用小智</h1></header>
+  <p id="intro" data-i18n="intro">这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。</p>
   <div class="cards">
-    <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music">音乐播放器</h2><small id="d-music">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
-    <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio">网络电台</h2><small id="d-radio">搜索、收藏和播放网络电台</small></a>
-    <a class="card" href="/book"><div class="icon">📖</div><h2>电子书朗读</h2><small>WebDAV 加载 TXT，在线 TTS 朗读</small></a>
-    <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config">设备配置</h2><small id="d-config">修改密码、睡眠模式、天气</small></a>
+    <a class="card" href="/music"><div class="icon">🎵</div><h2 id="t-music" data-i18n="music">音乐播放器</h2><small id="d-music" data-i18n="dmusic">浏览 WebDAV 音源、播放曲目、管理播放模式</small></a>
+    <a class="card" href="/radio"><div class="icon">📻</div><h2 id="t-radio" data-i18n="radio">网络电台</h2><small id="d-radio" data-i18n="dradio">搜索、收藏和播放网络电台</small></a>
+    <a class="card" href="/book"><div class="icon">📖</div><h2 data-i18n="book">电子书朗读</h2><small data-i18n="dbook">WebDAV 加载 TXT，在线 TTS 朗读</small></a>
+    <a class="card" href="/config"><div class="icon">⚙️</div><h2 id="t-config" data-i18n="config">设备配置</h2><small id="d-config" data-i18n="dconfig">修改密码、睡眠模式、天气</small></a>
   </div>
 </div>
 <script>
-const I18N={zh:{welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',config:'设备配置',dconfig:'修改密码、睡眠模式、天气'},en:{welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',config:'Settings',dconfig:'Password, sleep mode, weather'}};
+const I18N={zh:{docTitle:'小智首页',navMusic:'🎵 音乐',navRadio:'📻 电台',navBook:'📖 电子书',navConfig:'⚙️ 配置',welcome:'欢迎使用小智',intro:'这台设备现在既是一台 WebDAV 音乐播放器，也是一台网络电台。选择一个入口开始使用。',music:'音乐播放器',dmusic:'浏览 WebDAV 音源、播放曲目、管理播放模式',radio:'网络电台',dradio:'搜索、收藏和播放网络电台',book:'电子书朗读',dbook:'WebDAV 加载 TXT，在线 TTS 朗读',config:'设备配置',dconfig:'修改密码、睡眠模式、天气'},en:{docTitle:'XiaoZhi Home',navMusic:'🎵 Music',navRadio:'📻 Radio',navBook:'📖 Books',navConfig:'⚙️ Settings',welcome:'Welcome to XiaoZhi',intro:'This device is both a WebDAV music player and an internet radio. Pick an entry point to get started.',music:'Music Player',dmusic:'Browse WebDAV sources, play tracks and manage playback mode',radio:'Internet Radio',dradio:'Search, save and play radio stations',book:'E-book Reader',dbook:'WebDAV TXT books with online TTS narration',config:'Settings',dconfig:'Password, sleep mode, weather'}};
 let lang=localStorage.getItem('lang')==='en'?'en':(localStorage.getItem('lang')==='zh'?'zh':((navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en'));
-function applyHomeLang(){document.documentElement.lang=lang;const T=I18N[lang];for(const [id,key] of [['welcome','welcome'],['intro','intro'],['t-music','music'],['d-music','dmusic'],['t-radio','radio'],['d-radio','dradio'],['t-config','config'],['d-config','dconfig']]){const el=document.getElementById(id);if(el)el.textContent=I18N[lang][key]}}
+function applyHomeLang(){document.documentElement.lang=lang;const T=I18N[lang];document.title=T.docTitle;document.querySelectorAll('[data-i18n]').forEach(el=>{const v=T[el.getAttribute('data-i18n')];if(v)el.textContent=v})}
 applyHomeLang();window.addEventListener('storage',e=>{if(e.key==='lang'){lang=e.newValue==='en'?'en':'zh';applyHomeLang()}});
 const $=id=>document.getElementById(id);
 fetch('/api/auth').then(r=>r.json()).then(d=>{if(!d.authenticated)location.replace('/login?next=/');}).catch(()=>location.replace('/login?next=/'));
@@ -245,7 +245,7 @@ let lang = localStorage.getItem(LANG_KEY) === 'en' ? 'en' : 'zh';
 
 const I18N = {
   zh: {
-    app_title: '小智音乐', status_idle: '待机', status_playing: '播放中', no_source: '暂无音源',
+    app_title: '小智音乐', doc_title: '小智音乐', nav_book: '📖 电子书', nav_config: '⚙️ 配置', banner_desc: '打开更广阔的格局', src_base_url: '基础地址', src_dir_path: '目录路径', src_username: '用户名', src_password: '密码', status_idle: '待机', status_playing: '播放中', no_source: '暂无音源',
     loading: '正在加载…', source_mgmt: '管理音源', source_hint: '推荐用 OpenList 统一管理音源：它支持 FTP、SFTP、SMB、WebDAV、对象存储等多种网盘，并统一通过 WebDAV 提供给设备。基础地址填 OpenList 的 http 地址，目录路径填 /dav/<挂载目录>，例如 /dav/ftp/music。目录路径可直接填中文，系统自动编码。', source_refresh: '刷新', source_edit: '编辑',
     source_add: '添加', source_save: '保存', source_cancel: '取消编辑', source_del: '删除当前音源',
     source_none: '暂无音源', shuffle: '随机播放', play_all: '播放全部', prev: '上一首', stop: '停止',
@@ -256,7 +256,7 @@ const I18N = {
     nav_home: '🏠 首页', nav_radio: '📻 电台', nav_config: '⚙️ 配置', progress_playing: '播放中'
   },
   en: {
-    app_title: 'XiaoZhi Music', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
+    app_title: 'XiaoZhi Music', doc_title: 'XiaoZhi Music', nav_book: '📖 Books', nav_config: '⚙️ Settings', banner_desc: 'A wider world starts here', src_base_url: 'Base URL', src_dir_path: 'Path', src_username: 'Username', src_password: 'Password', status_idle: 'Idle', status_playing: 'Playing', no_source: 'No sources',
     loading: 'Loading…', source_mgmt: 'Manage Sources', source_hint: 'Use OpenList to manage sources: it supports FTP, SFTP, SMB, WebDAV, object storage and other drives, and exposes them all through WebDAV. Set Base URL to the OpenList http address and Path to /dav/<mount path>, for example /dav/ftp/music. Path supports Chinese characters directly; auto-encoded.', source_refresh: 'Refresh', source_edit: 'Edit',
     source_add: 'Add', source_save: 'Save', source_cancel: 'Cancel edit', source_del: 'Delete this source',
     source_none: 'No source', shuffle: 'Shuffle', play_all: 'Play all', prev: 'Previous', stop: 'Stop',
@@ -277,6 +277,7 @@ function applyLang() {
     if (v) el.textContent = v;
   });
   $('app-title').textContent = tr('app_title');
+  document.title = tr('doc_title');
   renderStatus(playing);
 }
 
@@ -428,10 +429,9 @@ function loadSourceForEdit(idx) {
 
 async function playAll(start) {
   if (!sources.length) return;
-  await api('/api/music/source', {
-    method: 'POST',
-    body: JSON.stringify({ index: sourceIndex, start: start || 0 })
-  });
+  const body = { index: sourceIndex };
+  if (typeof start === 'number') body.start = start;
+  await api('/api/music/source', { method: 'POST', body: JSON.stringify(body) });
   await pollStatus();
 }
 
@@ -449,14 +449,14 @@ $('tracks').addEventListener('click', (e) => {
   if (row) playTrack(parseInt(row.dataset.index, 10));
 });
 
-$('btn-play-all').addEventListener('click', () => playAll(0));
+$('btn-play-all').addEventListener('click', () => playAll());
 $('btn-toggle').addEventListener('click', async () => {
   if (playing.active && !playing.paused) {
     await api('/api/music/pause', { method: 'POST' });
   } else if (playing.paused) {
     await api('/api/music/resume', { method: 'POST' });
   } else {
-    await playAll(0);
+    await playAll();
   }
   await pollStatus();
 });

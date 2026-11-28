@@ -65,7 +65,7 @@ button:disabled{opacity:0.4;cursor:default}
     <div class="check"><input type="checkbox" id="net-enable"><label for="net-enable" data-i18n="net_enable">使用静态 IP（关闭则自动获取 DHCP）</label></div>
     <div class="row" style="margin-top:10px"><input id="net-ip" placeholder="192.168.1.150"><input id="net-mask" placeholder="255.255.255.0"></div>
     <div class="row"><input id="net-gw" placeholder="192.168.1.1"><input id="net-dns1" placeholder="DNS1 8.8.8.8"></div>
-    <input id="net-dns2" placeholder="DNS2（可选）">
+    <input id="net-dns2" placeholder="DNS2（可选）" data-i18n-ph="dns2_ph">
     <button id="btn-net" type="button" data-i18n="save_net">保存网络设置</button>
     <div class="hint" data-i18n="net_hint">留空的 DNS 不覆盖原值；配置在下次 Wi-Fi 连接或重启后生效。</div>
     <div id="msg-net"></div>
@@ -86,7 +86,7 @@ button:disabled{opacity:0.4;cursor:default}
       <label for="sleep-off-at" data-i18n="sleep_off_at">每天关机时间 (HH:MM，留空不定时关机)</label>
       <input id="sleep-off-at" type="time" step="60">
       <label for="sleep-off-min" data-i18n="sleep_off_min">空闲多少分钟后关机 (0=不关机)</label>
-      <input id="sleep-off-min" type="number" min="0" max="1440" step="1" placeholder="例如 60">
+      <input id="sleep-off-min" type="number" min="0" max="1440" step="1" placeholder="例如 60" data-i18n-ph="min_ph">
       <div class="hint" data-i18n="sleep_hint">• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行</div>
     </div>
     <button id="btn-sleep" type="button" style="margin-top:10px" data-i18n="save_sleep">保存睡眠设置</button>
@@ -98,10 +98,10 @@ const $=id=>document.getElementById(id);
 const LANG_KEY='lang';
 let lang=localStorage.getItem(LANG_KEY)==='en'?'en':'zh';
 const I18N={
-zh:{nav_home:'🏠 首页',nav_music:'🎵 音乐',nav_book:'📖 电子书',nav_radio:'📻 电台',title:'设备配置',lang_title:'界面语言',lang_label:'语言 / Language',lang_hint:'切换后所有页面立即使用所选语言。',net_title:'静态 IP（下次连接网络后生效）',net_enable:'使用静态 IP（关闭则自动获取 DHCP）',save_net:'保存网络设置',net_hint:'留空的 DNS 不覆盖原值；配置在下次 Wi-Fi 连接或重启后生效。',pwd_title:'修改密码',old_pwd:'当前密码',new_pwd:'新密码',change_pwd:'修改密码',sleep_title:'睡眠模式',sleep_enable:'启用睡眠模式',sleep_off_at:'每天关机时间 (HH:MM，留空不定时关机)',sleep_off_min:'空闲多少分钟后关机 (0=不关机)',sleep_hint:'• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行',save_sleep:'保存睡眠设置',pwd_ok:'密码已修改',pwd_fail:'修改失败，请检查当前密码',sleep_ok:'睡眠设置已保存',sleep_fail:'保存失败',net_ok:'网络设置已保存，下次连接生效',net_fail:'保存失败'},
-en:{nav_home:'🏠 Home',nav_music:'🎵 Music',nav_book:'📖 Books',nav_radio:'📻 Radio',title:'Settings',lang_title:'Language',lang_label:'界面语言 / Language',lang_hint:'All pages switch to the selected language immediately.',net_title:'Static IP (applies on next network connection)',net_enable:'Use static IP (off = DHCP)',save_net:'Save network settings',net_hint:'Empty DNS fields keep their previous values. Changes apply on the next Wi-Fi connection or reboot.',pwd_title:'Change password',old_pwd:'Current password',new_pwd:'New password',change_pwd:'Change password',sleep_title:'Sleep mode',sleep_enable:'Enable sleep mode',sleep_off_at:'Daily power-off time (HH:MM, empty = none)',sleep_off_min:'Power off after idle minutes (0 = off)',sleep_hint:'• Scheduled: power off daily at a fixed time<br>• Idle: power off after N minutes without activity<br>• Battery power really powers off; on USB the device only signals shutdown',save_sleep:'Save sleep settings',pwd_ok:'Password changed',pwd_fail:'Failed: check your current password',sleep_ok:'Sleep settings saved',sleep_fail:'Save failed',net_ok:'Network settings saved; applies on next connection',net_fail:'Save failed'}};
+zh:{nav_home:'🏠 首页',nav_music:'🎵 音乐',nav_book:'📖 电子书',nav_radio:'📻 电台',title:'设备配置',lang_title:'界面语言',lang_label:'语言 / Language',lang_hint:'切换后所有页面立即使用所选语言。',net_title:'静态 IP（下次连接网络后生效）',net_enable:'使用静态 IP（关闭则自动获取 DHCP）',save_net:'保存网络设置',net_hint:'留空的 DNS 不覆盖原值；配置在下次 Wi-Fi 连接或重启后生效。',pwd_title:'修改密码',old_pwd:'当前密码',new_pwd:'新密码',change_pwd:'修改密码',sleep_title:'睡眠模式',sleep_enable:'启用睡眠模式',sleep_off_at:'每天关机时间 (HH:MM，留空不定时关机)',sleep_off_min:'空闲多少分钟后关机 (0=不关机)',sleep_hint:'• 到点关机：每天固定时刻断电<br>• 空闲关机：待机无操作 N 分钟后断电，有交互重新计时<br>• 注意：电池供电时可真正断电；USB 供电时只发出关机信号，设备会继续运行',dns2_ph:'DNS2（可选）',min_ph:'例如 60',save_sleep:'保存睡眠设置',pwd_ok:'密码已修改',pwd_fail:'修改失败，请检查当前密码',sleep_ok:'睡眠设置已保存',sleep_fail:'保存失败',net_ok:'网络设置已保存，下次连接生效',net_fail:'保存失败'},
+en:{nav_home:'🏠 Home',nav_music:'🎵 Music',nav_book:'📖 Books',nav_radio:'📻 Radio',title:'Settings',lang_title:'Language',lang_label:'Language',lang_hint:'All pages switch to the selected language immediately.',net_title:'Static IP (applies on next network connection)',net_enable:'Use static IP (off = DHCP)',save_net:'Save network settings',net_hint:'Empty DNS fields keep their previous values. Changes apply on the next Wi-Fi connection or reboot.',pwd_title:'Change password',old_pwd:'Current password',new_pwd:'New password',change_pwd:'Change password',sleep_title:'Sleep mode',sleep_enable:'Enable sleep mode',sleep_off_at:'Daily power-off time (HH:MM, empty = none)',sleep_off_min:'Power off after idle minutes (0 = off)',sleep_hint:'• Scheduled: power off daily at a fixed time<br>• Idle: power off after N minutes without activity<br>• Battery power really powers off; on USB the device only signals shutdown',dns2_ph:'DNS2 (optional)',min_ph:'e.g. 60',save_sleep:'Save sleep settings',pwd_ok:'Password changed',pwd_fail:'Failed: check your current password',sleep_ok:'Sleep settings saved',sleep_fail:'Save failed',net_ok:'Network settings saved; applies on next connection',net_fail:'Save failed'}};
 const T=k=>I18N[lang][k]||I18N.zh[k]||k;
-function applyLang(){document.documentElement.lang=lang;document.title=T('title');document.querySelectorAll('[data-i18n]').forEach(el=>{el.innerHTML=T(el.getAttribute('data-i18n'))});$('lang-select').value=lang}
+function applyLang(){document.documentElement.lang=lang;document.title=T('title');document.querySelectorAll('[data-i18n]').forEach(el=>{el.innerHTML=T(el.getAttribute('data-i18n'))});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=T(el.getAttribute('data-i18n-ph'))});$('lang-select').value=lang}
 $('lang-select').addEventListener('change',e=>{lang=e.target.value;localStorage.setItem(LANG_KEY,lang);applyLang()});
 window.addEventListener('storage',e=>{if(e.key===LANG_KEY){lang=e.newValue==='en'?'en':'zh';applyLang()}});
 applyLang();

@@ -1656,11 +1656,18 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
     uint32_t seq = BeginSourceSwitch();
     (void)seq;
     StopEbook();
-    if (start_index < 0 || start_index >= static_cast<int>(tracks.size())) {
+    int resolved_source = source_index >= 0 ? source_index : LoadSelectedSource();
+    if (start_index < 0) {
+        start_index = LoadLastTrack(resolved_source);
+    }
+    // 随机模式且无上次曲目时保留 -1，表示直接用打乱后的顺序
+    if (start_index >= static_cast<int>(tracks.size()) ||
+        (start_index < 0 && mode != MusicPlayMode::kShuffle)) {
         start_index = 0;
     }
     StopNotification(true);
     MusicSource first;
+    int first_track = 0;
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         ClearMusicSessionLocked();
@@ -1681,12 +1688,15 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
             }
         }
         // 从指定曲目开始，保持其余曲目的相对顺序
-        auto begin = std::find(music_order_.begin(), music_order_.end(),
-                               static_cast<size_t>(start_index));
-        if (begin != music_order_.end()) {
-            std::rotate(music_order_.begin(), begin, music_order_.end());
+        if (start_index >= 0) {
+            auto begin = std::find(music_order_.begin(), music_order_.end(),
+                                   static_cast<size_t>(start_index));
+            if (begin != music_order_.end()) {
+                std::rotate(music_order_.begin(), begin, music_order_.end());
+            }
         }
         music_cursor_ = 0;
+        first_track = static_cast<int>(music_order_[0]);
         first = music_playlist_[music_order_[0]];
     }
     if (!StartNotification(first.audio_url, {}, first.username, first.password, first.title)) {
@@ -1694,17 +1704,20 @@ bool Application::PlayMusicPlaylist(std::vector<MusicSource> tracks, int source_
         ClearMusicSessionLocked();
         return false;
     }
+    SaveLastTrack(resolved_source, first_track);
     return true;
 }
 
 bool Application::PlayMusicTrackAt(int index) {
     MusicSource source;
+    int source_index = -1;
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         if (!music_active_ || music_playlist_.empty() || index < 0 ||
             index >= static_cast<int>(music_playlist_.size())) {
             return false;
         }
+        source_index = music_source_index_;
         auto it = std::find(music_order_.begin(), music_order_.end(), static_cast<size_t>(index));
         if (it == music_order_.end()) {
             return false;
@@ -1720,23 +1733,30 @@ bool Application::PlayMusicTrackAt(int index) {
         ClearMusicSessionLocked();
         return false;
     }
+    SaveLastTrack(source_index, index);
     return true;
 }
 
 bool Application::PlayNextMusic() {
     MusicSource next;
     bool has_next = false;
+    int source_index = -1;
+    int next_index = -1;
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         if (!music_active_ || music_playlist_.empty()) {
             return false;
         }
+        source_index = music_source_index_;
         if (music_cursor_ + 1 < music_order_.size()) {
             ++music_cursor_;
             music_fail_streak_ = 0;
-            next = music_playlist_[music_order_[music_cursor_]];
+            next_index = static_cast<int>(music_order_[music_cursor_]);
+            next = music_playlist_[next_index];
             has_next = true;
         } else {
+            // 列表播完：清掉续播点，下次“播放全部”从头开始
+            ClearLastTrack(source_index);
             ClearMusicSessionLocked();
         }
     }
@@ -1747,6 +1767,7 @@ bool Application::PlayNextMusic() {
             ClearMusicSessionLocked();
             return false;
         }
+        SaveLastTrack(source_index, next_index);
         return true;
     }
     return false;
@@ -1755,16 +1776,20 @@ bool Application::PlayNextMusic() {
 bool Application::PlayPrevMusic() {
     MusicSource prev;
     bool has_prev = false;
+    int source_index = -1;
+    int prev_index = -1;
     {
         std::lock_guard<std::mutex> lock(music_mutex_);
         if (!music_active_ || music_playlist_.empty()) {
             return false;
         }
+        source_index = music_source_index_;
         if (music_cursor_ > 0) {
             --music_cursor_;
         }
         music_fail_streak_ = 0;
-        prev = music_playlist_[music_order_[music_cursor_]];
+        prev_index = static_cast<int>(music_order_[music_cursor_]);
+        prev = music_playlist_[prev_index];
         has_prev = true;
     }
     StopNotification(true);
@@ -1774,6 +1799,7 @@ bool Application::PlayPrevMusic() {
             ClearMusicSessionLocked();
             return false;
         }
+        SaveLastTrack(source_index, prev_index);
         return true;
     }
     return false;
@@ -2325,6 +2351,33 @@ int Application::LoadSelectedSource() {
 void Application::SaveSelectedSource(int index) {
     Settings settings("music", true);
     settings.SetInt("selected_source", index);
+}
+
+int Application::LoadLastTrack(int source_index) {
+    if (source_index < 0)
+        return -1;
+    char key[16];
+    snprintf(key, sizeof(key), "lt%d", source_index);
+    Settings settings("music", false);
+    return settings.GetInt(key, -1);
+}
+
+void Application::SaveLastTrack(int source_index, int track_index) {
+    if (source_index < 0 || track_index < 0)
+        return;
+    char key[16];
+    snprintf(key, sizeof(key), "lt%d", source_index);
+    Settings settings("music", true);
+    settings.SetInt(key, track_index);
+}
+
+void Application::ClearLastTrack(int source_index) {
+    if (source_index < 0)
+        return;
+    char key[16];
+    snprintf(key, sizeof(key), "lt%d", source_index);
+    Settings settings("music", true);
+    settings.EraseKey(key);
 }
 
 void Application::SetMusicMode(MusicPlayMode mode) {

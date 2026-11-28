@@ -241,7 +241,7 @@ esp_err_t MusicPlaySourceHandler(httpd_req_t* req) {
     }
     Application::SaveSelectedSource(source_index);
     auto start_item = cJSON_GetObjectItem(root.get(), "start");
-    int start_index = cJSON_IsNumber(start_item) ? start_item->valueint : 0;
+    int start_index = cJSON_IsNumber(start_item) ? start_item->valueint : -1;
 
     std::string source_json;
     if (!LoadSourceJson(source_index, source_json)) {

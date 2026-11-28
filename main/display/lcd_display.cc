@@ -477,15 +477,15 @@ void LcdDisplay::CreateIdleUi() {
     lv_obj_align(idle_time_row_, LV_ALIGN_TOP_MID, 0, 44);
     lv_obj_add_flag(idle_time_row_, LV_OBJ_FLAG_HIDDEN);
 
+    idle_date_label_ = lv_label_create(idle_time_row_);
+    lv_obj_set_style_text_color(idle_date_label_, dim, 0);
+    lv_label_set_text(idle_date_label_, "");
+
     idle_time_label_ = lv_label_create(idle_time_row_);
     lv_obj_set_style_text_font(idle_time_label_, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(idle_time_label_, bright, 0);
+    lv_obj_set_style_margin_left(idle_time_label_, 8, 0);
     lv_label_set_text(idle_time_label_, "");
-
-    idle_date_label_ = lv_label_create(idle_time_row_);
-    lv_obj_set_style_text_color(idle_date_label_, dim, 0);
-    lv_obj_set_style_margin_left(idle_date_label_, 8, 0);
-    lv_label_set_text(idle_date_label_, "");
 
     // Weather icon drawn from shapes: the bundled fonts have no weather glyphs.
     idle_icon_box_ = lv_obj_create(screen);

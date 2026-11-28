@@ -564,7 +564,7 @@ void McpServer::AddCommonTools() {
                 cJSON_AddItemToObject(res, "books", slim);
                 return res;
             });
-    AddTool("ebook.play", "朗读 TXT 电子书。可用 name 模糊匹配书名（不传 url 时使用网页端保存的书源），或直接用 url 指定完整文件地址。",
+    AddTool("ebook.play", "朗读 TXT 电子书。可用 name 模糊匹配书名（不传 url 时使用网页端保存的书源），或直接用 url 指定完整文件地址；name 和 url 都不传时继续朗读最近一次播放的书，并从上次进度继续。",
             PropertyList({Property("name", kPropertyTypeString, ""),
                           Property("url", kPropertyTypeString, ""),
                           Property("username", kPropertyTypeString, ""),
@@ -608,7 +608,13 @@ void McpServer::AddCommonTools() {
                     if (matches > 1) return std::string("书名匹配到多本书，请更精确或直接用 url");
                     url = matched_url;
                 }
-                if (url.empty()) return std::string("请提供 name 或 url");
+                if (url.empty()) {
+                    std::string last_url, last_name;
+                    if (!EbookPlayer::GetLastBook(last_url, last_name)) {
+                        return std::string("没有最近播放的电子书，请提供 name 或 url");
+                    }
+                    url = last_url;
+                }
                 if (!Application::GetInstance().PlayEbook(url, user, pass)) {
                     return std::string("无法加载或播放电子书");
                 }
@@ -626,8 +632,7 @@ void McpServer::AddCommonTools() {
                 cJSON_AddBoolToObject(json, "active", st.active);
                 cJSON_AddBoolToObject(json, "paused", st.paused);
                 cJSON_AddStringToObject(json, "book", st.book_name.c_str());
-                cJSON_AddNumberToObject(json, "paragraph", st.paragraph);
-                cJSON_AddNumberToObject(json, "total", st.total);
+                cJSON_AddNumberToObject(json, "progress", st.progress);
                 return json;
             });
 
@@ -1329,14 +1334,24 @@ McpServer::ListMusicTracks(const std::string& source, bool* truncated, int offse
 __attribute__((noinline)) ToolResult McpServer::PlayMusicAll(const std::string& source, bool random) {
     // 未指定音源时回退到 NVS 里保存的选中音源
     std::string resolved_source = source;
+    int resolved_index = -1;
     if (resolved_source.empty()) {
         auto sources = LoadMusicSources();
         if (sources.empty()) {
             return std::unexpected(NoMusicSourceError());
         }
-        if (!MusicSourceAt(sources, Application::LoadSelectedSource(), &resolved_source)) {
+        resolved_index = Application::LoadSelectedSource();
+        if (!MusicSourceAt(sources, resolved_index, &resolved_source)) {
             return std::unexpected("已保存的音源序号超出范围（共 " +
                                    std::to_string(sources.size()) + " 个）");
+        }
+    } else {
+        auto sources = LoadMusicSources();
+        for (int i = 0; i < static_cast<int>(sources.size()); ++i) {
+            if (sources[i] == resolved_source) {
+                resolved_index = i;
+                break;
+            }
         }
     }
     // random=true 视为显式设置随机模式并持久化；否则读取 NVS 中保存的模式
@@ -1357,9 +1372,9 @@ __attribute__((noinline)) ToolResult McpServer::PlayMusicAll(const std::string& 
     cmd->type = PlaybackCommandType::PLAY;
     cmd->priority = PlaybackPriority::MUSIC;
     cmd->playlist = std::move(*tracks);
-    cmd->source_index = -1;
+    cmd->source_index = resolved_index;
     cmd->mode = Application::LoadPersistedMusicMode();
-    cmd->track_index = 0;
+    cmd->track_index = -1;  // 由播放会话按上次曲目/随机顺序决定起点
     (void)truncated;
 
     return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 10000));
@@ -1402,7 +1417,7 @@ ToolResult McpServer::PlayMusicSourceAt(int index, bool random) {
     cmd->playlist = std::move(*tracks);
     cmd->source_index = index;
     cmd->mode = Application::LoadPersistedMusicMode();
-    cmd->track_index = 0;
+    cmd->track_index = -1;  // 由播放会话按上次曲目/随机顺序决定起点
     (void)truncated;
 
     return ToToolResult(scheduler.SubmitAndWait(std::move(cmd), 10000));

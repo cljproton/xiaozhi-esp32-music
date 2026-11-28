@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 // Streaming text reader for WebDAV-hosted TXT books. Fetches the file in
@@ -28,6 +29,21 @@ public:
     size_t RawPosition() const { return chunk_raw_start_; }
     size_t TextPosition() const { return pos_; }
     size_t TotalBytes() const { return total_bytes_; }
+    // 已读的原始字节数：把解码后的偏移按比例折回原始字节，GBK 才不会虚高。
+    size_t ConsumedBytes() const {
+        if (buf_.empty() || raw_.empty())
+            return chunk_raw_start_;
+        return chunk_raw_start_ + pos_ * raw_.size() / buf_.size();
+    }
+    // 0-100；首个分块拿到文件大小之前为 0。
+    int Percent() const {
+        if (total_bytes_ == 0)
+            return 0;
+        size_t done = ConsumedBytes();
+        if (done > total_bytes_)
+            done = total_bytes_;
+        return static_cast<int>(static_cast<uint64_t>(done) * 100 / total_bytes_);
+    }
     bool EndOfFile() const { return eof_; }
     bool HasError() const { return error_; }
 
